@@ -1261,6 +1261,7 @@ body[data-mode="upscale"] #btnTrans{
   <div class="topActions">
     <button class="btn ghost" id="btnAudit" title="质检当前目录的 caption">质检</button>
     <button class="btn ghost" id="btnReplace" title="批量查找替换 caption">替换</button>
+    <button class="btn ghost" id="btnSaveCfg" title="把当前所有设置保存下来，下次打开自动恢复">保存设置</button>
     <button class="btn ghost" id="btnClear">清屏</button>
     <button class="btn ghost small" id="btnToggleRight" aria-label="收起预览面板" aria-expanded="true" title="收起或展开预览面板">▶</button>
   </div>
@@ -3759,20 +3760,65 @@ async function restoreConfig(){
   }catch(e){}
 }
 
+/* 显式保存：抓当前界面所有设置，写进 ui_config.json */
+async function saveConfigNow(showToast){
+  try{
+    const snapshot = {
+      caption: {
+        lora_type: state.type,
+        provider_id: $("#providerSel").value,
+        model: $("#modelSel").value,
+        effort: $("#effortSel") ? $("#effortSel").value : "",
+        person_name: $("#personName").value.trim(),
+        generic_subject: $("#genericSubject").value.trim(),
+        trigger_word: $("#triggerWord").value.trim(),
+        trigger_position: $("#triggerPosition").value,
+        style_hint: $("#styleHint").value.trim(),
+        extra_instructions: $("#extraInstr").value.trim(),
+        skip_existing: $("#optSkip").checked,
+        concurrency: +$("#optConcurrency").value,
+        recursive: $("#optRecursive").checked,
+        shot_tags: $("#optShotTags").checked,
+        folder_name: currentFolderName(),
+        auto_rename: $("#optAutoRename").checked,
+        directory: $("#dirInput").value.trim(),
+      },
+      upscale: {
+        multiplier: parseFloat($("#upscaleMultiplier").value),
+        sharpen: $("#optUpscaleSharpen").checked,
+      },
+      pipeline: {
+        directories: ($("#pipeDirs").value||"").split("\n").map(x=>x.trim()).filter(Boolean),
+        recursive: $("#optRecursive").checked,
+        multiplier: parseFloat($("#upscaleMultiplier").value),
+        sharpen: $("#optUpscaleSharpen").checked,
+        effort: $("#effortSel") ? $("#effortSel").value : "",
+      },
+      upscale_dirs: $("#upBatchDirs") ? $("#upBatchDirs").value : "",
+      caption_dirs: $("#capBatchDirs") ? $("#capBatchDirs").value : "",
+      saved_at: new Date().toISOString(),
+    };
+    const r = await fetch("/api/uiconfig",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(snapshot)});
+    const d = await r.json();
+    if(!r.ok || d.error){ toast("保存失败："+(d.error||r.status)); return false; }
+    if(showToast !== false){
+      log("ok","设置已保存");
+      toast("设置已保存，下次打开自动恢复");
+    }
+    return true;
+  }catch(e){
+    toast("保存失败："+e.message);
+    return false;
+  }
+}
+
+$("#btnSaveCfg") && $("#btnSaveCfg").addEventListener("click",()=>saveConfigNow(true));
+
 /* 把当前界面的关键参数存进完整配置（离开页面/切模式时自动保存） */
 async function persistUIConfig(){
-  try{
-    const cur = await (await fetch("/api/uiconfig")).json();
-    cur.upscale_dirs = $("#upBatchDirs") ? $("#upBatchDirs").value : "";
-    cur.caption_dirs = $("#capBatchDirs") ? $("#capBatchDirs").value : "";
-    cur.caption = Object.assign(cur.caption||{}, {
-      provider_id:$("#providerSel").value, model:$("#modelSel").value,
-      effort:$("#effortSel")?$("#effortSel").value:"",
-      lora_type:state.type,
-    });
-    await fetch("/api/uiconfig",{method:"POST",
-      headers:{"Content-Type":"application/json"}, body:JSON.stringify(cur)});
-  }catch(e){}
+  // 自动保存 == 静默版显式保存
+  await saveConfigNow(false);
 }
 
 // 参数变动时自动保存（去抖）
