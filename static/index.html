@@ -140,10 +140,15 @@ textarea{font-family:inherit}
 .repHit .rhBefore{color:var(--err);text-decoration:line-through;opacity:.75;word-break:break-all}
 .repHit .rhAfter{color:var(--ok);word-break:break-all}
 .repHit .rhArrow{color:var(--dim);margin:2px 0}
-#queueList .qItem{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:12.5px}
-#queueList .qItem .qDir{flex:1;word-break:break-all;color:var(--txt)}
-#queueList .qItem .qMeta{color:var(--dim);white-space:nowrap}
-#queueList .qItem .qRun{color:var(--warn);font-weight:600}
+.btn.warn{border-color:var(--warn);color:var(--warn)}
+#queueList .qItem{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:12.5px}
+#queueList .qItem .qOrder{display:flex;flex-direction:column;gap:1px;flex-shrink:0}
+#queueList .qItem .qOrder button{padding:0 5px;font-size:10px;line-height:1.5;border-radius:4px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
+#queueList .qItem .qOrder button:hover{border-color:var(--acc);color:var(--acc2)}
+#queueList .qItem .qDirWrap{flex:1;min-width:0}
+#queueList .qItem .qDir{word-break:break-all;color:var(--txt)}
+#queueList .qItem .qMeta{color:var(--dim);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#queueList .qItem .qRun{color:var(--warn);font-weight:600;white-space:nowrap}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--acc);color:var(--txt);padding:9px 20px;border-radius:9px;font-size:13px;z-index:200;display:none;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .toast.show{display:block;animation:fadein .2s}
 .empty-hint{grid-column:1/-1;text-align:center;color:var(--skip);padding:60px 0;font-size:13px}
@@ -431,11 +436,18 @@ textarea{font-family:inherit}
 
 <!-- 队列面板 -->
 <div id="queueOverlay" class="modal2">
-  <div class="modal2Box" style="width:min(640px,90vw)">
-    <div class="mhead"><span>📥 批处理队列</span><div style="display:flex;gap:6px"><button class="btn small ghost" id="btnQueueClear">清空队列</button><button class="btn small ghost" id="btnCloseQueue">✕</button></div></div>
+  <div class="modal2Box" style="width:min(760px,92vw)">
+    <div class="mhead">
+      <span>📥 批处理队列 <span id="queueSummary" style="color:var(--dim);font-weight:400;font-size:12px"></span></span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn small warn" id="btnQueueSkipCurrent" style="display:none">⏭ 跳过当前批次</button>
+        <button class="btn small ghost" id="btnQueueClear">清空队列</button>
+        <button class="btn small ghost" id="btnCloseQueue">✕</button>
+      </div>
+    </div>
     <div class="modal2Scroll" style="padding:12px 16px">
       <div style="display:flex;gap:10px;margin-bottom:10px">
-        <textarea id="queueDirs" rows="3" style="flex:1" placeholder="每行一个目录路径，用当前左侧配置依次打标"></textarea>
+        <textarea id="queueDirs" rows="3" style="flex:1" placeholder="每行一个目录路径，用当前左侧配置依次打标（可把资源管理器地址栏直接粘贴进来）"></textarea>
         <button class="btn primary" id="btnQueueAddMany" style="align-self:flex-end">全部入队</button>
       </div>
       <div id="queueList"></div>
@@ -980,27 +992,53 @@ $("#btnQueueAdd").addEventListener("click",async()=>{
   if(d.error){ toast(d.error); return; }
   toast(`已入队（第 ${d.position} 位）`);
   log("info",`目录入队: ${dir}`);
-  renderQueueBadge();
+  renderQueueBadge(); loadQueueIfOpen();
 });
 $("#btnQueueAdd").addEventListener("contextmenu",e=>{ e.preventDefault(); $("#queueOverlay").classList.add("show"); loadQueue(); });
+$("#btnQueueAdd").addEventListener("dblclick",()=>{ $("#queueOverlay").classList.add("show"); loadQueue(); });
+$("#btnQueueAdd").title="单击：当前目录入队 · 双击/右键：打开队列面板";
 $("#btnClear").addEventListener("click",async()=>{ renderQueueBadge(); });
+
 async function loadQueue(){
   const r=await fetch("/api/queue"); const d=await r.json();
   const list=$("#queueList"); list.innerHTML="";
+  // 摘要
+  const totalImgs=(d.queue||[]).reduce((s,q)=>s+(q.image_count||0),0);
+  $("#queueSummary").textContent=d.queue.length?`— ${d.queue.length} 个目录 · ${totalImgs} 张图`:"";
+  // 当前批
+  const skipBtn=$("#btnQueueSkipCurrent");
   if(d.running){
+    skipBtn.style.display="";
     const cur=document.createElement("div");
     cur.className="qItem"; cur.style.borderColor="var(--warn)";
-    cur.innerHTML=`<span class="qRun">▶ 处理中</span><span class="qDir">${d.current}</span>`;
+    const prog=d.current_stats?`${d.current_stats.done+d.current_stats.errors}/${d.current_stats.total}`:"";
+    cur.innerHTML=`<span class="qRun">▶ 处理中 ${prog}</span><span class="qDirWrap"><span class="qDir">${d.current}</span></span>`;
     list.appendChild(cur);
-  }
+  } else skipBtn.style.display="none";
   if(!d.queue.length&&!d.running){ list.innerHTML='<div style="color:var(--dim);padding:14px;text-align:center">队列为空</div>'; }
   d.queue.forEach((q,i)=>{
     const it=document.createElement("div");
     it.className="qItem";
-    it.innerHTML=`<span class="qMeta">#${i+1}</span><span class="qDir">${q.directory}</span>
-      <span class="qMeta">${q.lora_type} · ${q.model||""}</span>
-      <button class="btn small danger">移除</button>`;
-    it.querySelector("button").addEventListener("click",async()=>{
+    const metas=[];
+    if(q.person_name) metas.push(`名:${q.person_name}`);
+    if(q.trigger_word) metas.push(`触发:${q.trigger_word}`);
+    if(q.folder_name) metas.push(`文件夹:${q.folder_name}`);
+    metas.push(`${q.image_count}张`);
+    if(q.skip_existing) metas.push("续跑");
+    it.innerHTML=`
+      <span class="qOrder"><button data-mv="up" title="上移">▲</button><button data-mv="down" title="下移">▼</button></span>
+      <span class="qDirWrap">
+        <span class="qDir">#${i+1} ${q.directory}</span>
+        <span class="qMeta">${q.lora_type} · ${q.model||""}${metas.length?" · "+metas.join(" · "):""}</span>
+      </span>
+      <span class="qOrder"><button data-mv="top" title="置顶">⤒</button><button data-mv="bottom" title="置底">⤓</button></span>
+      <button class="btn small danger" data-rm="1">移除</button>`;
+    it.querySelectorAll("[data-mv]").forEach(b=>b.addEventListener("click",async()=>{
+      await fetch("/api/queue/move",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({directory:q.directory,direction:b.dataset.mv})});
+      loadQueue(); renderQueueBadge();
+    }));
+    it.querySelector("[data-rm]").addEventListener("click",async()=>{
       await fetch("/api/queue/remove",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({directory:q.directory})});
       loadQueue(); renderQueueBadge();
@@ -1008,6 +1046,13 @@ async function loadQueue(){
     list.appendChild(it);
   });
 }
+$("#btnQueueSkipCurrent").addEventListener("click",async()=>{
+  const r=await fetch("/api/queue/skip_current",{method:"POST"});
+  const d=await r.json();
+  if(d.error){ toast(d.error); return; }
+  toast("已请求跳过，等当前在跑的图完成后进入下一个");
+  log("warn","队列：请求跳过当前批次");
+});
 $("#btnQueueAddMany").addEventListener("click",async()=>{
   const dirs=$("#queueDirs").value.split("\n").map(s=>s.trim()).filter(Boolean);
   if(!dirs.length){ toast("先填目录，每行一个"); return; }
@@ -1015,7 +1060,7 @@ $("#btnQueueAddMany").addEventListener("click",async()=>{
   const r=await fetch("/api/queue/add_many",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({directories:dirs,params})});
   const d=await r.json();
-  toast(`入队 ${d.added.length} 个${d.errors.length?`，失败 ${d.errors.length} 个`:""}`);
+  toast(`入队 ${d.added.length} 个${d.skipped_dup.length?`，已在队列跳过 ${d.skipped_dup.length} 个`:""}${d.errors.length?`，失败 ${d.errors.length} 个`:""}`);
   log("info",`批量入队 ${d.added.length} 个目录`);
   $("#queueDirs").value="";
   loadQueue(); renderQueueBadge();

@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -42,6 +43,32 @@ _recent_dirs: list[str] = []
 _queue: list[dict] = []
 _queue_lock = threading.Lock()
 _advance_lock = threading.Lock()   # 防止 add 与 batch_done 同时触发双推进
+QUEUE_FILE = APP_DIR.parent / "queue.json"
+
+
+def _queue_persist():
+    """队列落盘（防重启丢失）。调用方必须不持 _queue_lock。"""
+    try:
+        snapshot = list(_queue)
+        QUEUE_FILE.write_text(json.dumps(snapshot, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _queue_restore():
+    """启动时恢复队列；目录已不存在的项丢弃。"""
+    global _queue
+    try:
+        if QUEUE_FILE.is_file():
+            restored = json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+            if isinstance(restored, list):
+                _queue = [q for q in restored
+                          if isinstance(q, dict) and Path(str(q.get("directory", ""))).is_dir()]
+    except Exception:
+        _queue = []
+
+
+_queue_restore()
 
 
 def emit(event: dict) -> None:
@@ -284,14 +311,15 @@ def _queue_advance():
     with _advance_lock:
         while True:
             with _queue_lock:
-                if _queue:
-                    nxt = _queue.pop(0)
-                else:
-                    return
+                nxt = _queue.pop(0) if _queue else None
+            if nxt is None:
+                return
+            _queue_persist()
             if _batch.running:
                 time.sleep(1.0)
                 with _queue_lock:
                     _queue.insert(0, nxt)
+                _queue_persist()
                 continue
             ok, err, total = _launch_batch(nxt)
             if ok:
@@ -314,6 +342,9 @@ def api_queue_add(req: QueueAddRequest):
     if not ok:
         return JSONResponse({"error": err}, status_code=400)
     params = dict(req)
+    # 队列模式不保留试跑截断（试跑是交互验证用的，不该进队列）
+    if params.get("limit"):
+        params["limit"] = 0
     save_last_config({
         "directory": req.directory, "lora_type": req.lora_type,
         "provider_id": req.provider_id, "model": req.model,
@@ -322,10 +353,12 @@ def api_queue_add(req: QueueAddRequest):
         "style_hint": req.style_hint, "extra_instructions": req.extra_instructions,
         "skip_existing": req.skip_existing, "concurrency": req.concurrency,
         "recursive": req.recursive, "shot_tags": req.shot_tags,
+        "folder_name": req.folder_name, "auto_rename": req.auto_rename,
     })
     with _queue_lock:
         _queue.append(params)
         pos = len(_queue)
+    _queue_persist()
     # 若当前无批次在跑，立即异步推进
     threading.Thread(target=_queue_advance, daemon=True).start()
     return {"ok": True, "position": pos, "queue_len": len(_queue)}
@@ -340,6 +373,8 @@ def api_queue_add_many(payload: dict):
     for d in dirs:
         p = dict(params)
         p["directory"] = str(d).strip()
+        if p.get("limit"):
+            p["limit"] = 0          # 队列不吃试跑截断
         with _queue_lock:
             if any(q["directory"] == p["directory"] for q in _queue):
                 skipped.append(p["directory"]); continue
@@ -349,6 +384,7 @@ def api_queue_add_many(payload: dict):
         with _queue_lock:
             _queue.append(p)
         added.append(p["directory"])
+    _queue_persist()
     if added:
         threading.Thread(target=_queue_advance, daemon=True).start()
     return {"ok": True, "added": added, "skipped_dup": skipped,
@@ -358,11 +394,50 @@ def api_queue_add_many(payload: dict):
 @app.get("/api/queue")
 def api_queue_list():
     with _queue_lock:
-        return {"queue": [{"directory": q["directory"], "lora_type": q["lora_type"],
-                           "model": q.get("model", ""), "trigger_word": q.get("trigger_word", "")}
-                          for q in _queue],
+        items = [{"directory": q["directory"], "lora_type": q["lora_type"],
+                  "model": q.get("model", ""), "trigger_word": q.get("trigger_word", ""),
+                  "person_name": q.get("person_name", ""), "generic_subject": q.get("generic_subject", ""),
+                  "folder_name": q.get("folder_name", ""),
+                  "skip_existing": q.get("skip_existing", True),
+                  "image_count": len(cap.scan_images(q["directory"], q.get("recursive", False)))}
+                 for q in _queue]
+        return {"queue": items,
                 "running": _batch.running,
-                "current": _batch.directory}
+                "current": _batch.directory,
+                "current_stats": _batch.stats() if _batch.running else None}
+
+
+@app.post("/api/queue/move")
+def api_queue_move(payload: dict):
+    """调整顺序：{directory, direction: 'up'|'down'|'top'|'bottom'}。"""
+    d = str(payload.get("directory", "")).strip()
+    direction = str(payload.get("direction", ""))
+    with _queue_lock:
+        idx = next((i for i, q in enumerate(_queue) if q["directory"] == d), -1)
+        if idx < 0:
+            return JSONResponse({"error": "不在队列中"}, status_code=404)
+        item = _queue.pop(idx)
+        if direction == "up" and idx > 0:
+            _queue.insert(idx - 1, item)
+        elif direction == "down" and idx < len(_queue):
+            _queue.insert(idx + 1, item)
+        elif direction == "top":
+            _queue.insert(0, item)
+        elif direction == "bottom":
+            _queue.append(item)
+        else:
+            _queue.insert(idx, item)
+    _queue_persist()
+    return {"ok": True}
+
+
+@app.post("/api/queue/skip_current")
+def api_queue_skip_current():
+    """跳过当前批次：请求取消，当前批结束由队列推进接管。"""
+    if not _batch.running:
+        return JSONResponse({"error": "当前没有在跑的批次"}, status_code=400)
+    _batch.cancel_requested = True
+    return {"ok": True}
 
 
 @app.post("/api/queue/clear")
@@ -370,6 +445,7 @@ def api_queue_clear():
     with _queue_lock:
         n = len(_queue)
         _queue.clear()
+    _queue_persist()
     return {"ok": True, "removed": n}
 
 
@@ -380,6 +456,7 @@ def api_queue_remove(payload: dict):
         before = len(_queue)
         _queue[:] = [q for q in _queue if q["directory"] != d]
         removed = before - len(_queue)
+    _queue_persist()
     return {"ok": True, "removed": removed}
 
 
@@ -502,6 +579,7 @@ def api_clear():
             time.sleep(0.1)
     with _queue_lock:
         _queue.clear()
+        _queue_persist()
     with _batch_lock:
         _batch.tasks = []
         _batch.directory = ""
@@ -731,6 +809,16 @@ def api_rename_execute(req: RenameRequest):
         emit({"type": "renamed", "old_path": result.get("old_path"),
               "new_path": result["new_path"], "target": result["target"]})
     return result
+
+
+@app.get("/api/debug/threads")
+def api_debug_threads():
+    """线程转储（诊断队列死锁用）。"""
+    import traceback
+    frames = {}
+    for th in threading.enumerate():
+        frames[th.name] = traceback.format_stack(sys._current_frames().get(th.ident, None) or [])
+    return {"threads": frames}
 
 
 @app.get("/api/template")
