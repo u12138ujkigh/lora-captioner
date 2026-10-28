@@ -4,41 +4,41 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#191915">
+<meta name="theme-color" content="#0c1118">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237d95ff'/%3E%3Cstop offset='1' stop-color='%23a78bfa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='%230b0d12'/%3E%3Cpath d='M28 30h44v10H42v9h24v10H42v11h30v10H28z' fill='url(%23g)'/%3E%3C/svg%3E">
 <title>LoRA Captioner — 训练集打标工作台</title>
 <style>
 /* ============================================================
-   LoRA Captioner — 暗房接触样片
-   主题取自暗房：暖石墨底、琥珀安全灯、相纸暖白。
-   只在一个地方用力 —— 接触样片网格；其余保持安静。
+   LoRA Captioner — 科技蓝控制台
+   冷蓝黑底、科技蓝高亮，语义色取同族青绿与淡紫。
+   只在一个地方用力 —— 文件网格；其余保持安静。
    ============================================================ */
 :root{
   color-scheme: dark;
 
-  /* 底色：暖石墨，不是冷蓝黑 */
-  --ink:#191915;          /* 最深的暗房地面 */
-  --paper:#21211c;        /* 面板：相纸背衬 */
-  --paper-2:#282823;      /* 抬起层：输入框、卡片 */
-  --paper-3:#31312a;      /* 悬停层 */
-  --rule:#3a3a32;         /* 分界线：细如相纸裁切痕 */
-  --rule-soft:#2e2e28;
+  /* 底色：冷蓝黑，带一点蓝的偏折，不纯灰 */
+  --ink:#0c1118;          /* 最深一层：内容区 */
+  --paper:#111721;        /* 面板 */
+  --paper-2:#17202c;      /* 抬起层：输入框、卡片 */
+  --paper-3:#1e2a39;      /* 悬停层 */
+  --rule:#26323f;         /* 分界线 */
+  --rule-soft:#1c2632;
 
-  /* 文字：相纸暖白，非纯白 */
-  --text:#e6e2d6;
-  --text-dim:#a8a89a;
-  --text-mute:#7b7b6e;
+  /* 文字：冷白，长时间阅读不刺眼 */
+  --text:#e4ecf7;
+  --text-dim:#94a3b8;
+  --text-mute:#64748b;
 
-  /* 琥珀安全灯：暗房里唯一的光 */
-  --safe:#e8a33d;
-  --safe-bright:#f5ba63;
-  --safe-wash:rgba(232,163,61,.12);
-  --safe-glow:rgba(232,163,61,.28);
+  /* 科技蓝：界面唯一的高亮 */
+  --safe:#4a9eff;
+  --safe-bright:#7cc0ff;
+  --safe-wash:rgba(74,158,255,.13);
+  --safe-glow:rgba(74,158,255,.32);
 
-  /* 语义色取褪色相纸调，不用霓虹 */
-  --done:#7fae8f;
-  --fail:#c9614f;
-  --sys:#7d9bb5;
+  /* 语义色：青绿 / 珊瑚红 / 淡紫，与蓝同族 */
+  --done:#3ecf8e;
+  --fail:#f76d6d;
+  --sys:#a78bfa;
 
   --r:6px;
   --r-sm:4px;
@@ -57,7 +57,7 @@
 /* hidden 属性必须压过 display:flex —— 否则空态和内容会同时显示 */
 [hidden]{display:none!important}
 
-::selection{background:rgba(232,163,61,.28);color:#fff}
+::selection{background:rgba(74,158,255,.32);color:#fff}
 
 body{
   background:var(--ink);
@@ -150,17 +150,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   touch-action:manipulation;
   -webkit-tap-highlight-color:transparent;
 }
-.btn:hover{background:var(--paper-3);border-color:#4a4a40;color:var(--text)}
+.btn:hover{background:var(--paper-3);border-color:#33414f;color:var(--text)}
 .btn:active{background:var(--paper-2)}
 .btn:disabled{opacity:.38;cursor:not-allowed;background:var(--paper-2)}
 .btn:disabled:hover{background:var(--paper-2);border-color:var(--rule);color:var(--text)}
 
 .btn.primary{
   background:var(--safe);border-color:var(--safe);
-  color:#1a1207;font-weight:650;
+  color:#04121f;font-weight:650;
   box-shadow:0 0 0 1px rgba(255,255,255,.06) inset;
 }
-.btn.primary:hover{background:var(--safe-bright);border-color:var(--safe-bright);color:#1a1207}
+.btn.primary:hover{background:var(--safe-bright);border-color:var(--safe-bright);color:#04121f}
 
 .btn.danger{color:var(--fail);border-color:rgba(201,97,79,.4)}
 .btn.danger:hover{background:rgba(201,97,79,.1);border-color:var(--fail);color:#e07a66}
@@ -168,7 +168,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .btn.ghost{background:transparent;border-color:transparent;color:var(--text-dim)}
 .btn.ghost:hover{background:var(--paper-2);color:var(--text)}
 
-.btn.warn{color:var(--safe);border-color:rgba(232,163,61,.4)}
+.btn.warn{color:var(--safe);border-color:rgba(74,158,255,.45)}
 .btn.warn:hover{background:var(--safe-wash);border-color:var(--safe)}
 
 .btn.small{padding:3px 8px;font-size:11.5px;border-radius:var(--r-sm)}
@@ -252,7 +252,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   font-family:inherit;font-size:12.5px;
   transition:border-color .14s var(--ease),background-color .14s var(--ease);
 }
-.field input[type=text]:hover,.field textarea:hover,.miniSelect:hover{border-color:#4a4a40}
+.field input[type=text]:hover,.field textarea:hover,.miniSelect:hover{border-color:#33414f}
 .field input[type=text]:focus,.field select:focus,.field textarea:focus,.miniSelect:focus{
   border-color:var(--safe);background:var(--paper-3);outline:none;
   box-shadow:0 0 0 2px var(--safe-wash);
@@ -326,7 +326,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .typeCard:hover{background:var(--paper-3);color:var(--text)}
 .typeCard.active{
   background:var(--safe-wash);
-  border-color:rgba(232,163,61,.45);
+  border-color:rgba(74,158,255,.5);
   color:var(--safe-bright);font-weight:600;
 }
 .typeCard .ico{font-size:15px;line-height:1;aria-hidden:true}
@@ -379,7 +379,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   touch-action:manipulation;
 }
 .arBtn:hover{background:var(--paper-2);color:var(--text)}
-.arBtn.active{background:var(--safe-wash);border-color:rgba(232,163,61,.4);color:var(--safe-bright)}
+.arBtn.active{background:var(--safe-wash);border-color:rgba(74,158,255,.45);color:var(--safe-bright)}
 
 /* 筛选：带计数，像样片分类标签 */
 #filterBtns{display:flex;gap:2px}
@@ -392,7 +392,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   touch-action:manipulation;
 }
 .fbtn:hover{background:var(--paper-2);color:var(--text)}
-.fbtn.active{background:var(--paper-3);color:var(--safe-bright);border-color:rgba(232,163,61,.35)}
+.fbtn.active{background:var(--paper-3);color:var(--safe-bright);border-color:rgba(74,158,255,.4)}
 .fbtn .n{
   font-size:10px;color:var(--text-mute);font-variant-numeric:tabular-nums;
   min-width:0;
@@ -428,7 +428,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   content-visibility:auto;
   contain-intrinsic-size:auto 140px;
 }
-.fileCard:hover{border-color:#5a5a4c}
+.fileCard:hover{border-color:#556273}
 .fileCard.selected{
   border-color:var(--safe);
   box-shadow:0 0 0 1px var(--safe),0 0 14px var(--safe-glow);
@@ -461,16 +461,16 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .fileCard .badge{
   position:absolute;top:4px;right:4px;
   width:7px;height:7px;border-radius:50%;
-  box-shadow:0 0 0 1.5px rgba(25,25,21,.85);
+  box-shadow:0 0 0 1.5px rgba(12,17,24,.85);
 }
 .st-pending .badge{background:var(--text-mute)}
 .st-running .badge{background:var(--safe);animation:pulse 1.4s ease-in-out infinite}
 .st-done .badge{background:var(--done)}
 .st-edited .badge{background:var(--safe-bright)}
 .st-error .badge{background:var(--fail)}
-.st-skipped .badge{background:#4a4a40}
+.st-skipped .badge{background:#2e3a49}
 
-.st-running{border-color:rgba(232,163,61,.55)}
+.st-running{border-color:rgba(74,158,255,.55)}
 .st-running img{opacity:.5}
 .st-error{border-color:rgba(201,97,79,.5)}
 
@@ -519,7 +519,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   height:var(--log-h);flex-shrink:0;
   display:flex;flex-direction:column;
   border-top:1px solid var(--rule);
-  background:#15150f;
+  background:#0a0e14;
   position:relative;
 }
 #logPanel.collapsed{height:28px}
@@ -546,7 +546,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 }
 #logBox > div{display:flex;gap:7px;white-space:pre-wrap;word-break:break-word}
 #logBox > div:hover{background:rgba(255,255,255,.025)}
-#logBox .t{color:#5a5a4c;flex-shrink:0;font-variant-numeric:tabular-nums}
+#logBox .t{color:#556273;flex-shrink:0;font-variant-numeric:tabular-nums}
 #logBox .l-info{color:var(--sys)}
 #logBox .l-ok{color:var(--done)}
 #logBox .l-err{color:var(--fail)}
@@ -590,7 +590,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   display:block;flex:0 0 auto;
   max-width:100%;max-height:34vh;
   object-fit:contain;align-self:center;
-  background:#0f0f0a;
+  background:#080b10;
   cursor:zoom-in;
 }
 #previewImg.zoomed{max-height:none;cursor:zoom-out}
@@ -637,12 +637,12 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   font-family:inherit;font-size:12.5px;line-height:1.6;
   transition:border-color .14s var(--ease),box-shadow .14s var(--ease);
 }
-#captionBox:hover{border-color:#4a4a40}
+#captionBox:hover{border-color:#33414f}
 #captionBox:focus{
   border-color:var(--safe);background:var(--paper-3);
   outline:none;box-shadow:0 0 0 2px var(--safe-wash);
 }
-#captionBox.dirty{border-color:rgba(232,163,61,.55)}
+#captionBox.dirty{border-color:rgba(74,158,255,.6)}
 
 /* 词数条：实时反馈，非装饰 */
 .capMeta{
@@ -707,7 +707,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 #promptModal{--mw:880px;resize:both;min-width:460px;min-height:320px}
 #promptModal textarea{
   flex:1;margin:10px;padding:9px;border-radius:var(--r-sm);
-  border:1px solid var(--rule);background:#15150f;color:var(--text-dim);
+  border:1px solid var(--rule);background:#0a0e14;color:var(--text-dim);
   font-family:"Cascadia Mono","Consolas",monospace;
   font-size:11.5px;line-height:1.7;resize:none;
 }
@@ -743,7 +743,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 }
 .agHead .btn{flex-shrink:0}
 
-.auditFiles{display:none;background:#1c1c17}
+.auditFiles{display:none;background:#0f141c}
 .auditGroup.open .auditFiles{display:block}
 .auditFile{
   display:flex;gap:8px;align-items:flex-start;
@@ -859,7 +859,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   transform:translateX(-50%) translateY(8px);
   z-index:200;display:none;
   padding:8px 14px;border-radius:var(--r);
-  background:#2f2f27;border:1px solid var(--rule);
+  background:#1b2430;border:1px solid var(--rule);
   color:var(--text);font-size:12.5px;
   box-shadow:0 10px 30px rgba(0,0,0,.5);
   max-width:min(520px,80vw);
@@ -871,14 +871,14 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 /* ============================================================
    滚动条：细、安静
    ============================================================ */
-*{scrollbar-width:thin;scrollbar-color:#42423a transparent}
+*{scrollbar-width:thin;scrollbar-color:#38465a transparent}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{
-  background:#42423a;border-radius:4px;
+  background:#38465a;border-radius:4px;
   border:2px solid transparent;background-clip:padding-box;
 }
-::-webkit-scrollbar-thumb:hover{background:#55554a;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#4a5b70;background-clip:padding-box}
 ::-webkit-scrollbar-corner{background:transparent}
 
 /* ============================================================
