@@ -223,15 +223,42 @@ def _wait(pid: str, timeout: float = 600.0) -> list:
 
 
 def _download(im: dict, dst_path: str) -> None:
+    """下载 ComfyUI 产出的图，并按目标扩展名转成真正的格式。
+
+    ComfyUI 的 SaveImage 默认存 PNG，即使我们想要 .jpg。
+    直接改后缀会让下游（网关）报 "Declared image type does not match its bytes"，
+    所以这里用 PIL 按目标后缀重新编码。
+    """
     q = urllib.parse.urlencode({
         "filename": im["filename"],
         "subfolder": im.get("subfolder", ""),
         "type": im.get("type", "output"),
     })
     data = _get(f"/view?{q}", timeout=120)
-    Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(dst_path, "wb") as f:
-        f.write(data)
+    dst = Path(dst_path)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    suffix = dst.suffix.lower()
+    try:
+        import io as _io
+        from PIL import Image
+        with Image.open(_io.BytesIO(data)) as src:
+            fmt = (src.format or "").upper()
+            want = {".jpg": "JPEG", ".jpeg": "JPEG",
+                    ".png": "PNG", ".webp": "WEBP"}.get(suffix, "")
+            # 已经是目标格式：直接落盘，避免重编码损失
+            if not want or fmt == want:
+                dst.write_bytes(data)
+                return
+            # 需要转码
+            img = src.convert("RGB") if want == "JPEG" else src
+            if want == "JPEG":
+                img.save(dst, "JPEG", quality=95, subsampling=1)
+            else:
+                img.save(dst, want)
+    except Exception:
+        # 解析失败就原样写，至少不丢文件
+        dst.write_bytes(data)
 
 
 # --------------------------------------------------------------------------- #

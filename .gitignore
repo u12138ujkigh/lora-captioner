@@ -30,3 +30,6 @@ _batchtest*
 _memtest*
 _updemo*
 _pickdemo*
+
+# runtime user config
+ui_config.json

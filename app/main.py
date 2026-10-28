@@ -47,6 +47,15 @@ _up_batch = {
     "started_at": 0.0, "finished_at": 0.0,
 }
 _up_lock = threading.Lock()
+
+# 一键全流程：多目录顺序「放大 → 打标」
+_pipe = {
+    "running": False, "cancel": False,
+    "dirs": [],            # [{directory, status, up_done, up_total, cap_done, cap_total, error}]
+    "current": -1,
+    "started_at": 0.0, "finished_at": 0.0,
+}
+_pipe_lock = threading.Lock()
 _batch_lock = threading.Lock()
 _recent_dirs: list[str] = []
 
@@ -165,6 +174,31 @@ class RetagManyRequest(BaseModel):
     shot_tags: bool = True
     effort: str = ""
     concurrency: int = 3
+
+
+class PipelineRequest(BaseModel):
+    """一键全流程：对每个目录先放大、再对放大结果打标。"""
+    directories: list[str]
+    recursive: bool = False
+    # 放大参数
+    multiplier: float = 3.0
+    sharpen: bool = False
+    # 打标参数（与 StartRequest 对齐）
+    lora_type: str = "person"
+    provider_id: str = ""
+    model: str = ""
+    person_name: str = ""
+    generic_subject: str = ""
+    trigger_word: str = ""
+    trigger_position: str = "prefix"
+    style_hint: str = ""
+    extra_instructions: str = ""
+    skip_existing: bool = True
+    concurrency: int = 3
+    shot_tags: bool = True
+    effort: str = ""
+    folder_name: str = ""
+    auto_rename: bool = False
 
 
 class UpscaleRequest(BaseModel):
@@ -331,6 +365,296 @@ def _run_upscale(req: dict) -> None:
     emit({"type": "up_batch_done", "stats": _up_stats()})
 
 
+# --------------------------------------------------------------------------- #
+# 一键全流程：多目录顺序执行 「放大 → 打标」
+# --------------------------------------------------------------------------- #
+def _pipe_stats() -> dict:
+    dirs = _pipe["dirs"]
+    total = len(dirs)
+    okn = sum(1 for d in dirs if d["status"] == "done")
+    errn = sum(1 for d in dirs if d["status"] == "error")
+    elapsed = ((_pipe["finished_at"] or time.time()) - _pipe["started_at"]
+               if _pipe["started_at"] else 0)
+    return {"total": total, "done": okn, "errors": errn,
+            "elapsed_s": round(elapsed, 1),
+            "current": _pipe["current"]}
+
+
+def _run_pipeline(params: dict) -> None:
+    """后台线程：对每个目录跑 放大 → 打标 两步。
+
+    放大失败不中断：继续用成功的图打标，最后汇总。
+    """
+    out_dirs = []
+    for d in _pipe["dirs"]:
+        src = d["directory"]
+        out_root = _up_out_dir(src, "")
+        d["out_dir"] = str(out_root)
+        out_dirs.append(str(out_root))
+
+    emit({"type": "pipe_start", "total": len(_pipe["dirs"])})
+
+    for idx, item in enumerate(_pipe["dirs"]):
+        if _pipe["cancel"]:
+            break
+        _pipe["current"] = idx
+        item["status"] = "running"
+        emit({"type": "pipe_dir_start", "index": idx,
+              "directory": item["directory"], "out_dir": item["out_dir"]})
+
+        # ---------- 步骤 1：放大 ----------
+        try:
+            src_dir = item["directory"]
+            out_root = Path(item["out_dir"])
+            items = cap.scan_images(src_dir, params["recursive"])
+            # 排除输出目录自身
+            out_resolved = str(out_root.resolve()).lower()
+            items = [it for it in items
+                     if not str(Path(it["path"]).resolve()).lower().startswith(out_resolved)]
+
+            todo = []
+            for it in items:
+                target = out_root / Path(it["path"]).name
+                if target.is_file():
+                    continue           # 已有结果，跳过
+                todo.append(it)
+
+            item["up_total"] = len(todo)
+            item["up_done"] = 0
+            emit({"type": "pipe_stage", "index": idx, "stage": "upscale",
+                  "total": len(todo)})
+
+            for it in todo:
+                if _pipe["cancel"]:
+                    break
+                try:
+                    out_root.mkdir(parents=True, exist_ok=True)
+                    dst = out_root / Path(it["path"]).name
+                    res = upscaler.run_one(str(it["path"]), str(dst),
+                                           params["multiplier"], params["sharpen"])
+                    if res.get("ok"):
+                        item["up_done"] = item.get("up_done", 0) + 1
+                    else:
+                        item.setdefault("up_errors", [])
+                        item["up_errors"].append(
+                            {"name": Path(it["path"]).name, "error": res.get("error", "")})
+                except Exception as e:
+                    item.setdefault("up_errors", [])
+                    item["up_errors"].append(
+                        {"name": Path(it["path"]).name, "error": str(e)})
+                emit({"type": "pipe_progress", "index": idx, "stage": "upscale",
+                      "done": item.get("up_done", 0), "total": item.get("up_total", 0)})
+
+            # 放大完释放 ComfyUI 显存，给打标腾地方
+            try:
+                upscaler.free_comfy_memory()
+            except Exception:
+                pass
+
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = f"放大阶段失败：{e}"
+            emit({"type": "pipe_dir_error", "index": idx,
+                  "directory": item["directory"], "error": item["error"]})
+            continue
+
+        if _pipe["cancel"]:
+            break
+
+        # ---------- 步骤 2：打标（读放大后的目录） ----------
+        try:
+            cap_dir = item["out_dir"]          # 打标放大后的图
+            if not Path(cap_dir).is_dir():
+                item["status"] = "done"
+                item["note"] = "没有产出放大图，跳过打标"
+                emit({"type": "pipe_dir_done", "index": idx,
+                      "directory": item["directory"], "note": item["note"]})
+                continue
+
+            cap_items = cap.scan_images(cap_dir, False)
+            item["cap_total"] = len(cap_items)
+            item["cap_done"] = 0
+            emit({"type": "pipe_stage", "index": idx, "stage": "caption",
+                  "total": len(cap_items)})
+
+            system_prompt = cap.build_system_prompt(
+                lora_type=params["lora_type"],
+                person_name=params["person_name"],
+                generic_subject=params["generic_subject"],
+                trigger_word=params["trigger_word"],
+                style_hint=params["style_hint"],
+                extra_instructions=params["extra_instructions"],
+            )
+            concurrency = max(1, min(int(params.get("concurrency", 3)), 8))
+
+            # 逐张打标（复用已有并发模式）
+            pending = []
+            for it in cap_items:
+                cp = Path(it["path"]).with_suffix(".txt")
+                if params.get("skip_existing", True) and cp.is_file():
+                    item["cap_done"] = item.get("cap_done", 0) + 1
+                    continue
+                pending.append(it)
+
+            lock_i = threading.Lock()
+            cur = {"i": 0}
+
+            def worker():
+                while True:
+                    if _pipe["cancel"]:
+                        return
+                    with lock_i:
+                        if cur["i"] >= len(pending):
+                            return
+                        it = pending[cur["i"]]
+                        cur["i"] += 1
+                    try:
+                        raw = prov.caption_image(
+                            provider_id=params["provider_id"],
+                            model=params["model"],
+                            image_path=Path(it["path"]),
+                            system_prompt=system_prompt,
+                            effort=params.get("effort", ""),
+                        )
+                        text, meta = cap.assemble_caption(
+                            raw, params["lora_type"],
+                            params.get("trigger_word", ""),
+                            params.get("trigger_position", "prefix"))
+                        if params.get("shot_tags", True):
+                            text = cap.ensure_shot_tag(
+                                text, cap.shot_tag_from_name(it["name"]))
+                        cp = Path(it["path"]).with_suffix(".txt")
+                        cap.backup_and_write(cp, text)
+                        with lock_i:
+                            item["cap_done"] = item.get("cap_done", 0) + 1
+                        emit({"type": "pipe_progress", "index": idx,
+                              "stage": "caption",
+                              "done": item.get("cap_done", 0),
+                              "total": item.get("cap_total", 0)})
+                    except Exception as e:
+                        item.setdefault("cap_errors", [])
+                        with lock_i:
+                            item["cap_errors"].append(
+                                {"name": it["name"], "error": str(e)})
+
+            threads = [threading.Thread(target=worker, daemon=True)
+                       for _ in range(concurrency)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            item["status"] = "done"
+            emit({"type": "pipe_dir_done", "index": idx,
+                  "directory": item["directory"]})
+
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = f"打标阶段失败：{e}"
+            emit({"type": "pipe_dir_error", "index": idx,
+                  "directory": item["directory"], "error": item["error"]})
+
+    _pipe["finished_at"] = time.time()
+    with _pipe_lock:
+        _pipe["running"] = False
+        _pipe["cancel"] = False
+        _pipe["current"] = -1
+    emit({"type": "pipe_done", "stats": _pipe_stats(),
+          "dirs": [{"directory": d["directory"], "status": d["status"],
+                    "up_done": d.get("up_done", 0), "up_total": d.get("up_total", 0),
+                    "cap_done": d.get("cap_done", 0), "cap_total": d.get("cap_total", 0),
+                    "error": d.get("error", ""),
+                    "up_errors": d.get("up_errors", []),
+                    "cap_errors": d.get("cap_errors", [])}
+                   for d in _pipe["dirs"]]})
+
+
+@app.post("/api/pipeline/start")
+def api_pipeline_start(req: PipelineRequest):
+    with _pipe_lock:
+        if _pipe["running"]:
+            return JSONResponse({"error": "全流程已在跑，先停止"}, status_code=409)
+
+        dirs = [d.strip() for d in req.directories if d and d.strip()]
+        if not dirs:
+            return JSONResponse({"error": "没有目录"}, status_code=400)
+
+        bad = [d for d in dirs if not Path(d).is_dir()]
+        if bad:
+            return JSONResponse({"error": f"目录不存在: {bad[0]}"}, status_code=400)
+
+        ok, msg = upscaler.available_for_webui()
+        if not ok:
+            return JSONResponse({"error": f"放大不可用：{msg}"}, status_code=400)
+        if not req.provider_id or not req.model:
+            return JSONResponse({"error": "先选 Provider 和模型"}, status_code=400)
+
+        _pipe.update({
+            "running": True, "cancel": False, "current": -1,
+            "started_at": time.time(), "finished_at": 0.0,
+            "dirs": [{"directory": d, "out_dir": "", "status": "pending",
+                      "up_done": 0, "up_total": 0, "cap_done": 0, "cap_total": 0}
+                     for d in dirs],
+        })
+
+    # 完整记忆：全流程参数 + 目录列表
+    _cfg = load_ui_config()
+    _cfg["pipeline"] = {
+        "directories": dirs, "recursive": req.recursive,
+        "multiplier": req.multiplier, "sharpen": req.sharpen,
+        "lora_type": req.lora_type, "provider_id": req.provider_id,
+        "model": req.model, "person_name": req.person_name,
+        "generic_subject": req.generic_subject, "trigger_word": req.trigger_word,
+        "trigger_position": req.trigger_position, "style_hint": req.style_hint,
+        "extra_instructions": req.extra_instructions,
+        "skip_existing": req.skip_existing, "concurrency": req.concurrency,
+        "shot_tags": req.shot_tags, "effort": req.effort,
+        "folder_name": req.folder_name, "auto_rename": req.auto_rename,
+    }
+    save_ui_config(_cfg)
+
+    threading.Thread(target=_run_pipeline, args=(dict(req.model_dump()),),
+                     daemon=True).start()
+    return {"ok": True, "total": len(dirs)}
+
+
+@app.post("/api/pipeline/stop")
+def api_pipeline_stop():
+    _pipe["cancel"] = True
+    _batch.cancel_requested = True
+    try:
+        upscaler.free_comfy_memory()
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@app.post("/api/pipeline/clear")
+def api_pipeline_clear():
+    with _pipe_lock:
+        if _pipe["running"]:
+            return JSONResponse({"error": "先停止全流程"}, status_code=409)
+        _pipe.update({"dirs": [], "current": -1, "started_at": 0.0,
+                      "finished_at": 0.0, "cancel": False})
+    return {"ok": True}
+
+
+@app.get("/api/pipeline/state")
+def api_pipeline_state():
+    with _pipe_lock:
+        return {"running": _pipe["running"], "current": _pipe["current"],
+                "stats": _pipe_stats(),
+                "dirs": [{"directory": d["directory"], "out_dir": d.get("out_dir", ""),
+                          "status": d["status"],
+                          "up_done": d.get("up_done", 0), "up_total": d.get("up_total", 0),
+                          "cap_done": d.get("cap_done", 0), "cap_total": d.get("cap_total", 0),
+                          "error": d.get("error", ""),
+                          "note": d.get("note", ""),
+                          "up_errors": d.get("up_errors", []),
+                          "cap_errors": d.get("cap_errors", [])}
+                         for d in _pipe["dirs"]]}
+
+
 @app.post("/api/upscale/scan")
 def api_upscale_scan(req: UpscaleRequest):
     """扫描预览：不启动，只列出待处理与已完成的图，供确认弹窗用。"""
@@ -479,6 +803,48 @@ def api_get_config():
     return load_last_config()
 
 
+# 完整的用户配置：包含打标 + 放大 + 全流程的所有参数
+_UI_CONFIG_FILE = None
+
+
+def _ui_cfg_path() -> Path:
+    global _UI_CONFIG_FILE
+    if _UI_CONFIG_FILE is None:
+        _UI_CONFIG_FILE = APP_DIR.parent / "ui_config.json"
+    return _UI_CONFIG_FILE
+
+
+def load_ui_config() -> dict:
+    """读取完整 UI 配置（不存在就返回空 dict）。"""
+    p = _ui_cfg_path()
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_ui_config(cfg: dict) -> None:
+    p = _ui_cfg_path()
+    try:
+        p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+@app.get("/api/uiconfig")
+def api_get_uiconfig():
+    """完整 UI 配置：打标参数、放大参数、多目录列表。"""
+    return load_ui_config()
+
+
+@app.post("/api/uiconfig")
+def api_set_uiconfig(cfg: dict):
+    save_ui_config(cfg)
+    return {"ok": True}
+
+
 @app.post("/api/config")
 def api_set_config(cfg: dict):
     save_last_config(cfg)
@@ -533,6 +899,21 @@ def api_start(req: StartRequest):
             "recursive": req.recursive,
             "shot_tags": req.shot_tags,
         })
+
+        # 完整记忆：打标参数（含思考强度）
+        _cfg = load_ui_config()
+        _cfg["caption"] = {
+            "lora_type": req.lora_type, "provider_id": req.provider_id,
+            "model": req.model, "person_name": req.person_name,
+            "generic_subject": req.generic_subject, "trigger_word": req.trigger_word,
+            "trigger_position": req.trigger_position, "style_hint": req.style_hint,
+            "extra_instructions": req.extra_instructions,
+            "skip_existing": req.skip_existing, "concurrency": req.concurrency,
+            "recursive": req.recursive, "shot_tags": req.shot_tags,
+            "folder_name": req.folder_name, "auto_rename": req.auto_rename,
+            "effort": req.effort,
+        }
+        save_ui_config(_cfg)
 
         threading.Thread(target=_run_batch, args=(dict(req),), daemon=True).start()
         return {"ok": True, "total": len(_batch.tasks)}

@@ -1205,6 +1205,24 @@ body[data-mode="upscale"] #btnTrans{
 }
 .upCard:hover .eye{opacity:1}
 .upCard .eye:hover{color:var(--safe-bright);border-color:var(--safe)}
+
+/* ---------- 全流程 ---------- */
+.pipeRow{
+  display:flex;align-items:flex-start;gap:8px;
+  padding:7px 9px;margin-bottom:5px;
+  background:var(--paper-2);border:1px solid var(--rule-soft);
+  border-radius:var(--r-sm);font-size:11.5px;
+}
+.pipeRow .ps{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:5px;
+  background:var(--text-mute)}
+.pipeRow.st-running .ps{background:var(--safe);animation:pulse 1.2s infinite}
+.pipeRow.st-done .ps{background:var(--done)}
+.pipeRow.st-error .ps{background:var(--fail)}
+.pipeRow .pb{flex:1;min-width:0}
+.pipeRow .pd{color:var(--text);word-break:break-all;line-height:1.45}
+.pipeRow .pm{color:var(--text-mute);font-size:10.5px;margin-top:2px;
+  font-variant-numeric:tabular-nums}
+.pipeRow .perr{color:var(--fail);font-size:10.5px;margin-top:2px}
 </style>
 </head>
 <body>
@@ -1234,6 +1252,7 @@ body[data-mode="upscale"] #btnTrans{
   <div class="topActions">
     <button class="btn primary" id="btnStart">开始打标</button>
     <button class="btn primary" id="btnUpStart" hidden>开始放大</button>
+    <button class="btn primary" id="btnPipeStart" title="对多个目录依次执行：先放大，再打标">一键全流程</button>
     <button class="btn" id="btnQueueAdd" title="把当前配置与目录加入队列，可排多个目录">排队</button>
     <button class="btn danger" id="btnStop" disabled>停止</button>
     <button class="btn danger" id="btnUpStop" hidden disabled>停止放大</button>
@@ -1285,6 +1304,27 @@ body[data-mode="upscale"] #btnTrans{
     </section>
 
     <!-- ============ 放大模式专属面板（与打标面板互斥显示） ============ -->
+    <section class="group" data-group="up-batch" id="upBatchPanel" hidden>
+      <button class="groupHead" aria-expanded="false">
+        <span class="tw" aria-hidden="true">▶</span>
+        <span class="label">批量放大</span>
+        <span class="badge" data-role="badge">多目录</span>
+      </button>
+      <div class="groupBody">
+        <div class="field">
+          <label for="upBatchDirs">目录列表（每行一个）</label>
+          <textarea id="upBatchDirs" rows="5" spellcheck="false"
+            placeholder="D:\data\Yanni&#10;D:\data\Mika&#10;D:\data\hanfu"></textarea>
+          <div class="hint">每行一个目录，一次性把多个目录加入放大队列</div>
+        </div>
+        <div class="alignRight">
+          <button class="btn small" id="btnUpBatchAdd">全部入队</button>
+        </div>
+        <div class="hint" id="upBatchStatus">队列为空</div>
+        <div id="upBatchList"></div>
+      </div>
+    </section>
+
     <section class="group open" data-group="up-settings" id="upPanel" hidden>
       <button class="groupHead" aria-expanded="true">
         <span class="tw" aria-hidden="true">▶</span>
@@ -1390,6 +1430,27 @@ body[data-mode="upscale"] #btnTrans{
       </div>
     </section>
 
+    <section class="group" data-group="cap-batch" id="capBatchPanel">
+      <button class="groupHead" aria-expanded="false">
+        <span class="tw" aria-hidden="true">▶</span>
+        <span class="label">批量打标</span>
+        <span class="badge" data-role="badge">多目录</span>
+      </button>
+      <div class="groupBody">
+        <div class="field">
+          <label for="capBatchDirs">目录列表（每行一个）</label>
+          <textarea id="capBatchDirs" rows="5" spellcheck="false"
+            placeholder="D:\data\Yanni&#10;D:\data\Mika&#10;D:\data\hanfu"></textarea>
+          <div class="hint">用当前左侧配置依次打标；空行自动忽略</div>
+        </div>
+        <div class="alignRight">
+          <button class="btn small" id="btnCapBatchAdd">全部入队</button>
+        </div>
+        <div class="hint" id="capBatchStatus">队列为空</div>
+        <div id="capBatchList"></div>
+      </div>
+    </section>
+
     <section class="group" data-group="trigger">
       <button class="groupHead" aria-expanded="false">
         <span class="tw" aria-hidden="true">▶</span>
@@ -1437,6 +1498,28 @@ body[data-mode="upscale"] #btnTrans{
           <label for="transModelSel">翻译模型（英文转中文展示）</label>
           <select id="transModelSel"><option>跟打标模型一致</option></select>
           <div class="alignRight"><button class="btn small ghost" id="btnRefreshProv">刷新引擎列表</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" data-group="pipeline" id="pipePanel">
+      <button class="groupHead" aria-expanded="false">
+        <span class="tw" aria-hidden="true">▶</span>
+        <span class="label">一键全流程</span>
+        <span class="badge" data-role="badge">放大 → 打标</span>
+      </button>
+      <div class="groupBody">
+        <div class="field">
+          <label for="pipeDirs">批量目录（每行一个）</label>
+          <textarea id="pipeDirs" rows="5" spellcheck="false"
+            placeholder="D:\data\Yanni&#10;D:\data\Mika&#10;D:\data\hanfu"></textarea>
+          <div class="hint">每个目录依次：先放大到「目录名_放大」，再对放大结果打标</div>
+        </div>
+        <div class="hint" id="pipeStatus">放大参数用「放大设置」，打标参数用左侧配置</div>
+        <div id="pipeList"></div>
+        <div class="alignRight" style="display:flex;gap:5px;justify-content:flex-end;margin-top:6px">
+          <button class="btn small ghost" id="btnPipeStop" disabled>停止</button>
+          <button class="btn small" id="btnPipeRun">开始全流程</button>
         </div>
       </div>
     </section>
@@ -1722,6 +1805,7 @@ $$("#typeCards .typeCard").forEach(c=>c.addEventListener("click",()=>applyType(c
 let _mode = "caption";
 
 const CAPTION_GROUPS = ["type","person","clothing","style","body","naming","trigger","engine","advanced"];
+// pipeline / cap-batch 由 syncModeUI 单独控制
 const UPSCALE_GROUPS = ["up-settings"];
 
 function setMode(mode, silent){
@@ -1751,6 +1835,8 @@ function setMode(mode, silent){
   $("#btnStop").hidden = isUp;
   $("#btnUpStart").hidden = !isUp;
   $("#btnUpStop").hidden = !isUp;
+  // 全流程在两种模式下都可用
+  const pb=$("#btnPipeStart"); if(pb) pb.hidden = false;
 
   // 打标辅助按钮在放大模式下也该隐藏
   ["#btnQueueAdd","#btnAudit","#btnReplace"].forEach(sel=>{
@@ -1777,6 +1863,14 @@ function setMode(mode, silent){
 
 function syncModeUI(){
   const isUp=_mode==="upscale";
+  // 全流程分组只在打标模式显示（放大模式已有自己的批量）
+  const pg=document.querySelector('section[data-group="pipeline"]');
+  if(pg) pg.hidden = isUp;
+  const ug=document.querySelector('section[data-group="up-batch"]');
+  if(ug) ug.hidden = !isUp;
+  const cg=document.querySelector('section[data-group="cap-batch"]');
+  if(cg) cg.hidden = isUp;
+  if(!isUp) updateCapBatchStatus();
   syncUpscaleUI();
   if(isUp){
     loadUpBatch();
@@ -2284,6 +2378,211 @@ function renderUpStats(d){
       ? `放大 ${st.done+st.errors}/${st.total}`
       : `放大完成 ${st.done}/${st.total}`;
   }
+}
+
+/* ===================== 一键全流程 ===================== */
+let _pipeTimer = null;
+
+function pipeDirs(){
+  return ($("#pipeDirs")?$("#pipeDirs").value:"").split("\n")
+    .map(x=>x.trim()).filter(Boolean);
+}
+
+async function pipeStart(){
+  const dirs = pipeDirs();
+  if(!dirs.length){
+    toast("先填目录，每行一个");
+    if($("#pipeDirs")) $("#pipeDirs").focus();
+    return;
+  }
+  if(!_upAvailable){ toast("放大环境不可用，全流程需要它"); return; }
+  if(!$("#providerSel").value || !$("#modelSel").value){
+    toast("先选 Provider 和模型");
+    return;
+  }
+
+  const mult = parseFloat($("#upscaleMultiplier")?$("#upscaleMultiplier").value:"3");
+  const msg = `即将对 ${dirs.length} 个目录依次执行：\n\n`
+    + dirs.map((d,i)=>`  ${i+1}. ${d}`).join("\n")
+    + `\n\n每个目录：放大 ${mult}× → 对放大结果打标\n`
+    + `放大失败不中断，最后汇总。继续？`;
+  if(!confirm(msg)) return;
+
+  const p = collectParams();
+  const body = {
+    directories: dirs,
+    recursive: $("#optRecursive").checked,
+    multiplier: mult,
+    sharpen: $("#optUpscaleSharpen") ? $("#optUpscaleSharpen").checked : false,
+    lora_type: p.lora_type, provider_id: p.provider_id, model: p.model,
+    person_name: p.person_name, generic_subject: p.generic_subject,
+    trigger_word: p.trigger_word, trigger_position: p.trigger_position,
+    style_hint: p.style_hint, extra_instructions: p.extra_instructions,
+    skip_existing: $("#optSkip").checked, concurrency: +$("#optConcurrency").value,
+    shot_tags: $("#optShotTags").checked,
+    effort: $("#effortSel") ? $("#effortSel").value : "",
+    folder_name: currentFolderName(), auto_rename: $("#optAutoRename").checked,
+  };
+
+  const r = await fetch("/api/pipeline/start",{method:"POST",
+    headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const d = await r.json();
+  if(d.error){ toast(d.error); log("err", d.error); return; }
+
+  log("sys", `全流程开始：${d.total} 个目录`);
+  pipeSetRunning(true);
+  pipePoll();
+}
+
+async function pipeStop(){
+  await fetch("/api/pipeline/stop",{method:"POST"});
+  log("warn","已请求停止全流程");
+}
+
+function pipeSetRunning(run){
+  const b=$("#btnPipeRun"), st=$("#btnPipeStop");
+  if(b){ b.disabled=run; b.textContent= run?"全流程运行中…":"开始全流程"; }
+  if(st){ st.disabled=!run; }
+  $("#btnStart").disabled=run;
+  $("#btnUpStart").disabled=run||!_upAvailable;
+}
+
+function pipePoll(){
+  if(_pipeTimer) clearInterval(_pipeTimer);
+  _pipeTimer=setInterval(async()=>{
+    try{
+      const r=await fetch("/api/pipeline/state"); const d=await r.json();
+      renderPipe(d);
+      if(!d.running){
+        clearInterval(_pipeTimer); _pipeTimer=null;
+        pipeSetRunning(false);
+        // 结束后刷新当前目录视图
+        if(_mode==="upscale") upScan();
+        else scanDir();
+      }
+    }catch(e){}
+  }, 1500);
+}
+
+function renderPipe(d){
+  const box=$("#pipeList");
+  const st=d.stats||{};
+  const dirs=d.dirs||[];
+
+  // 状态文字
+  const stEl=$("#pipeStatus");
+  if(stEl){
+    stEl.textContent = st.total
+      ? `共 ${st.total} 个目录 · 完成 ${st.done}${st.errors?` · 失败 ${st.errors}`:""}`
+        + (d.running?` · 运行中`:"") + (st.elapsed_s?` · ${st.elapsed_s}s`:"")
+      : "放大参数用「放大设置」，打标参数用左侧配置";
+  }
+
+  if(!box) return;
+  if(!dirs.length){
+    box.innerHTML="";
+    return;
+  }
+  box.innerHTML=dirs.map((x,i)=>{
+    const cls = x.status==="running"?"st-running"
+      :x.status==="done"?"st-done"
+      :x.status==="error"?"st-error":"";
+    const up = x.up_total ? `放大 ${x.up_done}/${x.up_total}` : "放大 -";
+    const cap = x.cap_total ? `打标 ${x.cap_done}/${x.cap_total}` : "打标 -";
+    const errs = (x.up_errors||[]).length + (x.cap_errors||[]).length;
+    const errLine = x.error ? `<div class="perr">${x.error}</div>`
+      : errs ? `<div class="perr">${errs} 张失败</div>` : "";
+    return `<div class="pipeRow ${cls}">
+      <span class="ps"></span>
+      <span class="pb">
+        <span class="pd">${i+1}. ${x.directory}</span>
+        <span class="pm">${up} · ${cap}${x.note?` · ${x.note}`:""}</span>
+        ${errLine}
+      </span>
+    </div>`;
+  }).join("");
+}
+
+$("#btnPipeRun") && $("#btnPipeRun").addEventListener("click",pipeStart);
+$("#btnPipeStop") && $("#btnPipeStop").addEventListener("click",pipeStop);
+$("#btnPipeStart") && $("#btnPipeStart").addEventListener("click",pipeStart);
+
+/* ===================== 批量路径（放大） ===================== */
+async function upBatchAdd(){
+  const dirs=($("#upBatchDirs")?$("#upBatchDirs").value:"").split("\n")
+    .map(x=>x.trim()).filter(Boolean);
+  if(!dirs.length){ toast("先填目录，每行一个"); return; }
+  if(!_upAvailable){ toast("放大环境不可用"); return; }
+
+  const mult=parseFloat($("#upscaleMultiplier")?$("#upscaleMultiplier").value:"3");
+  const msg=`即将放大 ${dirs.length} 个目录：\n\n`
+    + dirs.map((d,i)=>`  ${i+1}. ${d}`).join("\n")
+    + `\n\n每个目录放大 ${mult}×，输出到「目录名_放大」。继续？`;
+  if(!confirm(msg)) return;
+
+  // 逐个目录排队（放大接口一次一个目录，这里串行提交）
+  let ok=0, fail=0;
+  for(const dir of dirs){
+    try{
+      const r=await fetch("/api/upscale/start",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          directory:dir, recursive:$("#optRecursive").checked,
+          multiplier:mult,
+          sharpen:$("#optUpscaleSharpen")?$("#optUpscaleSharpen").checked:false,
+          skip_existing:true,
+        })});
+      const d=await r.json();
+      if(d.error){ fail++; log("err",`${dir}: ${d.error}`); }
+      else { ok++; log("info",`${dir} 已开始放大（${d.total} 张）`); }
+    }catch(e){ fail++; log("err",`${dir}: ${e.message}`); }
+  }
+  log("info",`批量放大：${ok} 个目录已启动${fail?`，${fail} 个失败`:""}`);
+  toast(`已启动 ${ok} 个目录${fail?`，失败 ${fail}`:""}`);
+  $("#upBatchDirs").value="";
+  upSetRunning(true);
+  startUpPolling();
+}
+
+$("#btnUpBatchAdd") && $("#btnUpBatchAdd").addEventListener("click",upBatchAdd);
+
+/* ===================== 批量路径（打标） ===================== */
+async function capBatchAdd(){
+  const dirs=($("#capBatchDirs")?$("#capBatchDirs").value:"").split("\n")
+    .map(x=>x.trim()).filter(Boolean);
+  if(!dirs.length){ toast("先填目录，每行一个"); return; }
+
+  const params=collectStartParams({directory:dirs[0]});
+  const r=await fetch("/api/queue/add_many",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directories:dirs,params})});
+  const d=await r.json();
+  toast(`入队 ${d.added.length} 个`
+    + (d.skipped_dup.length?`，重复跳过 ${d.skipped_dup.length}`:"")
+    + (d.errors.length?`，失败 ${d.errors.length}`:""));
+  log("info",`批量打标入队 ${d.added.length} 个目录`);
+  $("#capBatchDirs").value="";
+  renderQueueBadge();
+  updateCapBatchStatus();
+}
+
+$("#btnCapBatchAdd") && $("#btnCapBatchAdd").addEventListener("click",capBatchAdd);
+
+async function updateCapBatchStatus(){
+  try{
+    const d=await (await fetch("/api/queue")).json();
+    const el=$("#capBatchStatus");
+    if(el) el.textContent = d.queue.length
+      ? `队列中 ${d.queue.length} 个目录` : "队列为空";
+    const box=$("#capBatchList");
+    if(box){
+      box.innerHTML=(d.queue||[]).map((q,i)=>
+        `<div class="pipeRow"><span class="ps"></span><span class="pb">
+          <span class="pd">${i+1}. ${q.directory}</span>
+          <span class="pm">${q.image_count||0} 张 · ${q.lora_type||""}</span>
+        </span></div>`).join("");
+    }
+  }catch(e){}
 }
 
 /* ===================== 文件夹选择器 ===================== */
@@ -3423,8 +3722,14 @@ es.onerror=()=>{ /* SSE 断线自动重连 */ };
 /* ===================== 记住配置 ===================== */
 async function restoreConfig(){
   try{
+    // 先读完整配置（含思考强度、放大、批量目录），再读 last_config 兜底
+    let full={};
+    try{ full=await (await fetch("/api/uiconfig")).json(); }catch(e){}
+    const fc = full.caption || {};
+    const fp = full.pipeline || {};
+
     const r=await fetch("/api/config"); state.lastCfg=await r.json();
-    const c=state.lastCfg;
+    const c=Object.assign({}, state.lastCfg||{}, fc);   // 完整配置优先
     if(c.directory) $("#dirInput").value=c.directory;
     if(c.person_name) $("#personName").value=c.person_name;
     if(c.generic_subject) $("#genericSubject").value=c.generic_subject;
@@ -3437,12 +3742,52 @@ async function restoreConfig(){
     if(c.auto_rename!==undefined) $("#optAutoRename").checked=c.auto_rename;
     if(c.concurrency) { $("#optConcurrency").value=c.concurrency; $("#concVal").textContent=c.concurrency; }
     if(c.recursive!==undefined) $("#optRecursive").checked=c.recursive;
+    if(c.folder_name!==undefined && $("#renameName")) $("#renameName").value=c.folder_name||"";
+    // 思考强度（等 provider 加载完再设，见 syncEffortOptions 的保留逻辑）
+    if(c.effort) state.curEffort=c.effort;
+    // 批量目录列表
+    if(fp.directories && $("#pipeDirs")) $("#pipeDirs").value=fp.directories.join("\n");
+    if(fp.multiplier && $("#upscaleMultiplier")) $("#upscaleMultiplier").value=String(fp.multiplier);
+    if(fp.sharpen!==undefined && $("#optUpscaleSharpen")) $("#optUpscaleSharpen").checked=fp.sharpen;
+    if(full.upscale_dirs && $("#upBatchDirs")) $("#upBatchDirs").value=full.upscale_dirs;
+    if(full.caption_dirs && $("#capBatchDirs")) $("#capBatchDirs").value=full.caption_dirs;
+
     if(c.lora_type){
       const card=document.querySelector(`.typeCard[data-type="${c.lora_type}"]`);
       if(card) card.click();
     }
   }catch(e){}
 }
+
+/* 把当前界面的关键参数存进完整配置（离开页面/切模式时自动保存） */
+async function persistUIConfig(){
+  try{
+    const cur = await (await fetch("/api/uiconfig")).json();
+    cur.upscale_dirs = $("#upBatchDirs") ? $("#upBatchDirs").value : "";
+    cur.caption_dirs = $("#capBatchDirs") ? $("#capBatchDirs").value : "";
+    cur.caption = Object.assign(cur.caption||{}, {
+      provider_id:$("#providerSel").value, model:$("#modelSel").value,
+      effort:$("#effortSel")?$("#effortSel").value:"",
+      lora_type:state.type,
+    });
+    await fetch("/api/uiconfig",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(cur)});
+  }catch(e){}
+}
+
+// 参数变动时自动保存（去抖）
+let _persistT=null;
+function schedulePersist(){
+  clearTimeout(_persistT);
+  _persistT=setTimeout(persistUIConfig, 800);
+}
+["#effortSel","#providerSel","#modelSel","#upBatchDirs","#capBatchDirs",
+ "#pipeDirs","#upscaleMultiplier"].forEach(sel=>{
+  const el=$(sel);
+  if(el){ el.addEventListener("change",schedulePersist);
+          el.addEventListener("input",schedulePersist); }
+});
+window.addEventListener("beforeunload",()=>{ persistUIConfig(); });
 $("#optConcurrency").addEventListener("input",()=>$("#concVal").textContent=$("#optConcurrency").value);
 
 /* ===================== 日志折叠 + 拖拽调高 ===================== */
@@ -3729,7 +4074,12 @@ $("#triggerWord").addEventListener("input",syncTriggerBadge);
   await loadProviders();
   await loadUpscaleStatus();
   syncEffortOptions();
+  if(state.curEffort && $("#effortSel")){
+    const has=[...$("#effortSel").options].some(o=>o.value===state.curEffort);
+    if(has) $("#effortSel").value=state.curEffort;
+  }
   setMode("caption", true);
+  updateCapBatchStatus();
   applyType(state.type);
   syncDirBadge(); syncEngineBadge(); syncTriggerBadge();
   await loadUpscaleStatus();
