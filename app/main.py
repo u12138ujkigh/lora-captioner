@@ -277,7 +277,7 @@ def _run_upscale(req: dict) -> None:
             else:
                 dst = src.with_name(src.stem + "_up" + src.suffix)
 
-            res = upscaler.run_subprocess(str(src), str(dst), mult, sharpen)
+            res = upscaler.run_one(str(src), str(dst), mult, sharpen)
             if not res.get("ok"):
                 raise RuntimeError(res.get("error", "放大失败"))
 
@@ -300,6 +300,11 @@ def _run_upscale(req: dict) -> None:
     with _up_lock:
         _up_batch["running"] = False
         _up_batch["cancel"] = False
+    # 跑完让 ComfyUI 卸掉模型，把显存还回去
+    try:
+        upscaler.free_comfy_memory()
+    except Exception:
+        pass
     emit({"type": "up_batch_done", "stats": _up_stats()})
 
 
@@ -351,6 +356,10 @@ def api_upscale_start(req: UpscaleRequest):
 @app.post("/api/upscale/stop")
 def api_upscale_stop():
     _up_batch["cancel"] = True
+    try:
+        upscaler.free_comfy_memory()
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -379,12 +388,12 @@ def api_upscale_batch():
 
 @app.get("/api/upscale/status")
 def api_upscale_status():
-    """放大能力自检：torch / CUDA / 模型文件是否齐全。"""
+    """放大能力自检：ComfyUI 在线 + 模型文件在。"""
     ok, msg = upscaler.available_for_webui()
     return {"available": ok, "message": msg,
             "multiplier": upscaler.CFG["multiplier"],
-            "unet": Path(upscaler.CFG["unet"]).name,
-            "vae": Path(upscaler.CFG["vae"]).name}
+            "unet": upscaler.CFG["unet"],
+            "vae": upscaler.CFG["vae"]}
 
 
 @app.get("/api/config")
@@ -648,7 +657,7 @@ def api_queue_remove(payload: dict):
 
 
 def _upscale_one(task, multiplier: float, sharpen: bool, mode: str) -> tuple[str, dict]:
-    """放大单张图（交给独立子进程，用 ComfyUI 的 torch 环境跑）。
+    """放大单张图（提交给 ComfyUI 执行，本进程不加载模型）。
 
     返回 (给打标用的图片路径, meta)。
     mode=inplace：覆盖原图，原图先备份为 .orig；
@@ -673,7 +682,7 @@ def _upscale_one(task, multiplier: float, sharpen: bool, mode: str) -> tuple[str
         target = src.with_name(src.stem + "_up" + src.suffix)
         dst = target
 
-    res = upscaler.run_subprocess(str(src), str(dst), multiplier, sharpen)
+    res = upscaler.run_one(str(src), str(dst), multiplier, sharpen)
     if not res.get("ok"):
         raise RuntimeError("放大失败：%s" % res.get("error", "未知错误"))
 
