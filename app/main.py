@@ -156,9 +156,11 @@ class RetagManyRequest(BaseModel):
 
 
 class TranslateRequest(BaseModel):
-    provider_id: str
-    model: str
+    provider_id: str = ""
+    model: str = ""
     text: str
+    engine: str = "bing"      # bing（默认，无需密钥）| llm（走 provider）
+    aligned: bool = False     # 需要词级对齐映射
 
 
 class AuditRequest(BaseModel):
@@ -801,11 +803,101 @@ def api_retag_many_sync(req: RetagManyRequest):
 
 @app.post("/api/translate")
 def api_translate(req: TranslateRequest):
-    try:
-        out = prov.translate_text(req.provider_id, req.model, req.text)
-        return {"ok": True, "translation": out}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    """翻译 caption。默认走 Bing（免费、无需密钥），可回退到 LLM。
+
+    aligned=True 时额外返回词级对齐：把英文按逗号切段，逐段给出中文，
+    供前端做「删中文词 → 删对应英文词」的联动。
+    """
+    text = (req.text or "").strip()
+    if not text:
+        return {"ok": True, "translation": "", "segments": []}
+
+    # ---- 1) 取得译文 ----
+    translation = ""
+    used = req.engine or "bing"
+    err = None
+
+    if used == "llm" and req.provider_id and req.model:
+        try:
+            translation = prov.translate_text(req.provider_id, req.model, text)
+        except Exception as e:
+            err = str(e)
+            used = "bing"
+    if not translation:
+        try:
+            translation = prov.bing_translate(text)
+        except Exception as e:
+            err = str(e)
+
+    if not translation:
+        # 最后尝试 LLM（若配置了）
+        if req.provider_id and req.model:
+            try:
+                translation = prov.translate_text(req.provider_id, req.model, text)
+                used = "llm"
+            except Exception as e:
+                err = str(e)
+    if not translation:
+        return JSONResponse({"error": err or "翻译失败"}, status_code=500)
+
+    # ---- 2) 词级对齐（按逗号分段，逐段翻译）----
+    segments = []
+    if req.aligned:
+        parts = [x.strip() for x in text.split(",") if x.strip()]
+        # Bing 支持一次多句；逐段请求会慢，这里整段翻完后按标点切分对齐
+        zh_parts = []
+        try:
+            zh_all = prov.bing_translate(text)
+            zh_parts = [x.strip() for x in re.split(r"[，,]", zh_all) if x.strip()]
+        except Exception:
+            zh_parts = []
+
+        if len(zh_parts) == len(parts):
+            segments = [{"en": e, "zh": z} for e, z in zip(parts, zh_parts)]
+        else:
+            # 段数对不上：退化为整句对齐（前端可走重译）
+            segments = [{"en": text, "zh": translation, "whole": True}]
+
+    return {"ok": True, "translation": translation,
+            "segments": segments, "engine": used, "error": err}
+
+
+@app.get("/api/upscale/original")
+def api_upscale_original(path: str):
+    """返回某张图对应的「放大前原图」，用于对比查看。
+
+    覆盖模式：原图备份在 xxx.jpg.orig
+    另存模式：放大图叫 xxx_up.jpg，原图是去掉 _up 的那个
+    """
+    src = Path(path)
+    if not src.is_file():
+        return JSONResponse({"error": "文件不存在"}, status_code=404)
+
+    cand = None
+    # 1) 覆盖模式：同目录 *.orig
+    orig = src.with_suffix(src.suffix + ".orig")
+    if orig.is_file():
+        cand = orig
+    # 2) 另存模式：xxx_up.jpg -> xxx.jpg
+    elif src.stem.endswith("_up"):
+        base = src.with_name(src.stem[:-3] + src.suffix)
+        if base.is_file():
+            cand = base
+    # 3) 自己就是原图
+    else:
+        cand = src
+
+    if cand is None:
+        return JSONResponse({"error": "找不到原图"}, status_code=404)
+
+    from fastapi.responses import FileResponse
+    mime = "image/jpeg"
+    if cand.suffix.lower() == ".png":
+        mime = "image/png"
+    elif cand.suffix.lower() == ".webp":
+        mime = "image/webp"
+    return FileResponse(cand, media_type=mime,
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/browse")

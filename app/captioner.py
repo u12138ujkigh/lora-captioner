@@ -80,6 +80,7 @@ def scan_images(directory: str, recursive: bool = False) -> list[dict]:
             "size": st.st_size,
             "mtime": int(st.st_mtime),
             "has_caption": caption.is_file(),
+            "has_orig": Path(str(p) + ".orig").is_file(),
             "width": size[0] if size else 0,
             "height": size[1] if size else 0,
         })

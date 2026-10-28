@@ -978,6 +978,73 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 }
 .st-upscaling .upshield{display:flex}
 .st-upscaling{box-shadow:0 0 0 1px rgba(74,158,255,.55)}
+
+/* 双语状态 */
+.biState{
+  font-size:9.5px;line-height:14px;padding:0 6px;border-radius:3px;
+  background:var(--paper-3);color:var(--text-dim);
+  border:1px solid var(--rule);
+  white-space:nowrap;
+}
+.biState[data-mode="zh"]{
+  background:rgba(74,158,255,.14);color:var(--safe-bright);
+  border-color:rgba(74,158,255,.4);font-weight:600;
+}
+
+/* ---------- 放大前后对比 ---------- */
+.cmpWrap{
+  --x:100%;            /* 竖线位置（0-100%），由 JS 跟随鼠标更新 */
+  position:relative;align-self:stretch;
+  width:100%;height:46vh;min-height:220px;
+  overflow:hidden;cursor:ew-resize;
+  border-bottom:1px solid var(--rule);
+  user-select:none;
+  background:#080b10;
+  flex:0 0 auto;
+}
+.cmpWrap img{
+  display:block;width:100%;height:100%;
+  object-fit:contain;
+  pointer-events:none;
+  -webkit-user-drag:none;
+}
+/* 上面那张（原图）按竖线位置裁切：线左侧露出原图 */
+.cmpWrap #cmpAfter{position:absolute;inset:0}
+.cmpWrap #cmpBefore{
+  position:absolute;inset:0;
+  clip-path:inset(0 calc(100% - var(--x,0%)) 0 0);
+}
+.cmpLine{
+  position:absolute;top:0;bottom:0;left:var(--x,0%);
+  width:2px;margin-left:-1px;
+  background:var(--safe);
+  box-shadow:0 0 8px var(--safe-glow);
+  pointer-events:none;
+  opacity:0;transition:opacity .15s var(--ease);
+}
+.cmpWrap:hover .cmpLine{opacity:1}
+.cmpGrip{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:20px;height:20px;border-radius:50%;
+  background:var(--safe);border:2px solid #04121f;
+  box-shadow:0 2px 8px rgba(0,0,0,.6);
+}
+.cmpGrip::before,.cmpGrip::after{
+  content:"";position:absolute;top:50%;width:0;height:0;
+  border-top:3px solid transparent;border-bottom:3px solid transparent;
+  transform:translateY(-50%);
+}
+.cmpGrip::before{left:3px;border-right:3px solid #04121f}
+.cmpGrip::after{right:3px;border-left:3px solid #04121f}
+.cmpTag{
+  position:absolute;top:6px;
+  font-size:9.5px;line-height:15px;padding:0 5px;border-radius:3px;
+  background:rgba(12,17,24,.75);color:var(--text-dim);
+  pointer-events:none;opacity:0;transition:opacity .15s var(--ease);
+}
+.cmpTag.left{left:6px}
+.cmpTag.right{right:6px;color:var(--safe-bright)}
+.cmpWrap:hover .cmpTag{opacity:1}
 </style>
 </head>
 <body>
@@ -1291,6 +1358,13 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
       <div class="pvEmptyDesc">点击中间任意一张卡片，在这里查看原图并编辑 caption</div>
     </div>
     <div id="previewBody">
+      <div class="cmpWrap" id="cmpWrap" hidden>
+        <img id="cmpAfter" alt="放大后">
+        <img id="cmpBefore" alt="原图">
+        <div class="cmpLine" id="cmpLine"><span class="cmpGrip"></span></div>
+        <span class="cmpTag left">原图</span>
+        <span class="cmpTag right">放大后</span>
+      </div>
       <img id="previewImg" alt="">
       <div id="previewInfo">
         <div id="pvName"></div>
@@ -1298,6 +1372,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
         <textarea id="captionBox" placeholder="这张图的 caption，可直接编辑" spellcheck="false" aria-label="caption 内容"></textarea>
         <div class="capMeta">
           <span class="wc" id="capWords">0 词</span>
+          <span class="biState" id="biState" hidden></span>
           <span class="spacer"></span>
           <span class="dirtyTag" id="capDirty" hidden>未保存</span>
         </div>
@@ -1305,7 +1380,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
         <div id="previewBtns">
           <button class="btn small primary" id="btnSaveCap" title="保存 caption（Ctrl+S）">保存</button>
           <button class="btn small" id="btnRetag" title="用当前配置重新为这张图生成 caption">重打</button>
-          <button class="btn small" id="btnTrans" title="把 caption 翻译成中文，仅用于阅读，不写回文件">译中文</button>
+          <button class="btn small" id="btnTrans" title="在中文与英文之间切换（首次会先用 Bing 翻译并缓存）">中/EN</button>
           <button class="btn small ghost" id="btnOpenImg" title="在新标签页打开原图">原图</button>
         </div>
       </div>
@@ -1389,6 +1464,9 @@ const $$ = s => [...document.querySelectorAll(s)];
 
 let state = {
   type: "person",
+  // 双语缓存：{path: {en, zh, segments:[{en,zh}], mode:"en"|"zh"}}
+  bi: {},
+  biMode: "en",
   providers: [],
   curProvider: "",
   curModel: "",
@@ -1612,7 +1690,7 @@ async function scanDir(){
     const p=prev.get(it.path);
     const base={path:it.path,name:it.name,status:it.has_caption?(p&&p.status!=="pending"?p.status:"skipped"):"pending",
       caption:"",error:"",duration_ms:0,size:it.size,
-      w:it.width||0,h:it.height||0};
+      w:it.width||0,h:it.height||0,has_orig:!!it.has_orig};
     return base;
   });
   renderGrid();
@@ -1701,7 +1779,7 @@ function renderGrid(){
       <div class="upshield">放大中</div>
       <div class="badge" aria-hidden="true"></div><div class="fname">${f.name}</div>
       <div class="errtag">${f.error||"错误"}</div>`;
-    if(f.upscaled) card.classList.add("is-upscaled");
+    if(isUpscaledFile(f)) card.classList.add("is-upscaled");
     fadeInImg(card.querySelector("img"));
     card.addEventListener("click",()=>selectFile(f.path));
     card.addEventListener("keydown",e=>{
@@ -1729,7 +1807,7 @@ function updateCard(path){
   const card=document.querySelector(`.fileCard[data-path="${CSS.escape(path)}"]`);
   if(!card) return;
   card.className=`fileCard st-${f.status}`+(state.selected===path?" selected":"")
-    +(f.upscaled?" is-upscaled":"");
+    +(isUpscaledFile(f)?" is-upscaled":"");
   card.setAttribute("aria-selected",state.selected===path?"true":"false");
   const et=card.querySelector(".errtag"); if(f.error) et.textContent=f.error;
   if(f.error) card.title=f.name+"\n错误："+f.error;
@@ -1748,7 +1826,16 @@ $("#btnRescan").addEventListener("click",scanDir);
 
 /* ===================== 词数条 ===================== */
 function countWords(text){
-  return (text||"").trim().split(/\s+/).filter(Boolean).length;
+  const t=(text||"").trim();
+  if(!t) return 0;
+  // 含中文：按汉字数 + 英文词数
+  const cjk=(t.match(/[\u4e00-\u9fff]/g)||[]).length;
+  if(cjk>0){
+    const en=t.replace(/[\u4e00-\u9fff]/g," ").trim();
+    const enWords=en?en.split(/\s+/).filter(Boolean).length:0;
+    return cjk+enWords;
+  }
+  return t.split(/\s+/).filter(Boolean).length;
 }
 function updateCapMeta(){
   const box=$("#captionBox");
@@ -1772,6 +1859,7 @@ async function selectFile(path){
   $("#previewBody").classList.add("show");
   $("#previewImg").src="/api/image?path="+encodeURIComponent(path);
   $("#previewImg").classList.remove("zoomed");
+  cmpSetup(path, isUpscaledFile(f));
   $("#pvName").textContent=path;
   // 读 caption
   const r=await fetch("/api/caption?path="+encodeURIComponent(path));
@@ -1784,6 +1872,7 @@ async function selectFile(path){
   $("#capDirty").hidden=true;
   updateCapMeta();
   $("#transBox").classList.remove("show");
+  syncBiIndicator();
   const stMap={pending:["待处理","st-pend"],upscaling:["放大中","st-run"],running:["打标中","st-run"],done:["已完成","st-ok"],
     edited:["已编辑","st-edit"],error:["失败","st-err"],skipped:["跳过","st-skip"]};
   const meta=stMap[f.status]||[f.status,""];
@@ -1791,6 +1880,62 @@ async function selectFile(path){
   $("#pvStatus").innerHTML=st;
 }
 $("#previewImg").addEventListener("click",()=>$("#previewImg").classList.toggle("zoomed"));
+
+/* ===================== 放大前后对比 ===================== */
+/* 是否可对比：文件名带 _up 后缀，或同目录存在 .orig 备份。
+   用命名规则判断而不是依赖运行时状态，重渲染后依然有效。 */
+function isUpscaledFile(f){
+  if(!f) return false;
+  if(f.upscaled) return true;
+  const n=(f.name||"").toLowerCase();
+  if(/_up\.[a-z0-9]+$/.test(n)) return true;
+  if(f.has_orig) return true;
+  return false;
+}
+
+/* 默认显示放大后的图；鼠标移入后，竖线跟随鼠标，
+   线左侧显示原图、右侧显示放大图；离开恢复全放大图。 */
+function cmpSetup(path, isUpscaled){
+  const wrap=$("#cmpWrap"), img=$("#previewImg");
+  if(!isUpscaled){
+    wrap.hidden=true; img.style.display="";
+    return;
+  }
+  wrap.hidden=false;
+  img.style.display="none";
+
+  const after=$("#cmpAfter"), before=$("#cmpBefore");
+  after.src="/api/image?path="+encodeURIComponent(path);
+  before.src="/api/upscale/original?path="+encodeURIComponent(path)+"&t="+Date.now();
+  wrap.style.setProperty("--x","100%");     // 默认：全显示放大图
+}
+
+function cmpReset(){
+  const wrap=$("#cmpWrap");
+  if(wrap) wrap.style.setProperty("--x","100%");
+}
+
+(function bindCmp(){
+  const wrap=$("#cmpWrap");
+  if(!wrap) return;
+  const move=e=>{
+    const r=wrap.getBoundingClientRect();
+    const x=Math.max(0, Math.min(1, (e.clientX-r.left)/r.width));
+    wrap.style.setProperty("--x",(x*100)+"%");
+  };
+  wrap.addEventListener("mousemove",move);
+  wrap.addEventListener("mouseenter",move);
+  wrap.addEventListener("mouseleave",()=>wrap.style.setProperty("--x","100%"));
+  // 触屏：拖动也能看
+  wrap.addEventListener("touchmove",e=>{
+    if(!e.touches.length) return;
+    const r=wrap.getBoundingClientRect();
+    const x=Math.max(0, Math.min(1, (e.touches[0].clientX-r.left)/r.width));
+    wrap.style.setProperty("--x",(x*100)+"%");
+    e.preventDefault();
+  },{passive:false});
+  wrap.addEventListener("touchend",()=>wrap.style.setProperty("--x","100%"));
+})();
 
 $("#btnSaveCap").addEventListener("click",async()=>{
   if(!state.selected) return;
@@ -1842,19 +1987,130 @@ $("#btnRetag").addEventListener("click",async()=>{
   }finally{ btn.disabled=false; btn.textContent="🔄 重打"; }
 });
 
-$("#btnTrans").addEventListener("click",async()=>{
-  const text=$("#captionBox").value.trim();
-  if(!text){ toast("caption 是空的，没有可翻译的内容"); return; }
-  const btn=$("#btnTrans"); btn.disabled=true; btn.textContent="⏳ 翻译中…";
-  const tb=$("#transBox"); tb.classList.add("show"); tb.textContent="翻译中…";
+/* ===================== 中英双语切换 ===================== */
+/*
+  once 翻译后缓存 {en, zh, segments}；之后点按钮只切换显示，不再请求。
+  编辑中文时按 segments 的词级映射同步增删对应英文。
+*/
+function biOf(path){ return state.bi[path]; }
+
+async function ensureBi(path, force){
+  const cached = state.bi[path];
+  if(cached && !force && cached.zh) return cached;
+
+  const text = $("#captionBox").value.trim();
+  if(!text){ toast("caption 是空的，没有可翻译的内容"); return null; }
+
+  const btn=$("#btnTrans");
+  const oldLabel=btn.textContent;
+  btn.disabled=true; btn.textContent="翻译中…";
   try{
     const model=$("#transModelSel").value||$("#modelSel").value;
     const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({provider_id:$("#providerSel").value,model,text})});
+      body:JSON.stringify({
+        provider_id:$("#providerSel").value, model, text,
+        engine:"bing", aligned:true,
+      })});
     const d=await r.json();
-    tb.textContent=d.error?("翻译失败: "+d.error):d.translation;
-  }finally{ btn.disabled=false; btn.textContent="🈶 译中文"; }
+    if(d.error){ toast("翻译失败："+d.error); return null; }
+    const bi={en:text, zh:d.translation, segments:d.segments||[], mode:"zh"};
+    state.bi[path]=bi;
+    log("ok",`译好并缓存（${d.engine||"bing"}）`);
+    return bi;
+  }catch(e){
+    toast("翻译请求失败："+e.message);
+    return null;
+  }finally{
+    btn.disabled=false; btn.textContent=oldLabel;
+  }
+}
+
+/* 词级联动：把当前（中文）内容与缓存的 zh 对比，同步到英文 */
+function syncEnFromZh(path, newZh){
+  const bi=biOf(path);
+  if(!bi||!bi.segments||!bi.segments.length) return null;
+
+  const segs=bi.segments;
+  // 整句对齐模式：无法精确到词，退回重译提示
+  if(segs.length===1 && segs[0].whole) return null;
+
+  const nowParts=newZh.split(/[，,]/).map(x=>x.trim()).filter(Boolean);
+  // 用最长公共子序列思路：保留仍然存在的段，删掉消失的段
+  const kept=[];
+  const pool=nowParts.slice();
+  segs.forEach(sg=>{
+    const i=pool.findIndex(p=>p===sg.zh||p.includes(sg.zh)||sg.zh.includes(p));
+    if(i>=0){ kept.push(sg); pool.splice(i,1); }
+  });
+  // 新增的中文段（没有对应英文）无法反推，标记出来
+  const added=pool;
+
+  const newEn=kept.map(sg=>sg.en).join(", ");
+  return {en:newEn, removed:segs.length-kept.length, added:added.length, addedParts:added};
+}
+
+$("#btnTrans").addEventListener("click",async()=>{
+  if(!state.selected){ toast("先选一张图"); return; }
+  const path=state.selected;
+
+  // 已经有缓存：单纯切换显示
+  const cached=biOf(path);
+  if(cached && cached.zh){
+    // 若当前是中文视图，切回英文
+    if(cached.mode==="zh"){
+      cached.mode="en";
+      $("#captionBox").value=cached.en;
+      state.savedCaption = $("#captionBox").value;
+    }else{
+      cached.mode="zh";
+      $("#captionBox").value=cached.zh;
+    }
+    $("#captionBox").classList.remove("dirty");
+    $("#capDirty").hidden=true;
+    updateCapMeta();
+    syncBiIndicator();
+    return;
+  }
+
+  // 首次：翻译并切到中文
+  const bi=await ensureBi(path);
+  if(!bi) return;
+  bi.mode="zh";
+  $("#captionBox").value=bi.zh;
+  $("#captionBox").classList.remove("dirty");
+  $("#capDirty").hidden=true;
+  updateCapMeta();
+  syncBiIndicator();
 });
+
+/* 双语状态提示 */
+function syncBiIndicator(){
+  const box=$("#biState");
+  if(!box) return;
+  const bi=state.selected?biOf(state.selected):null;
+  if(!bi||!bi.zh){ box.hidden=true; return; }
+  box.hidden=false;
+  box.dataset.mode=bi.mode;
+  box.textContent = bi.mode==="zh" ? "中文（缓存）" : "English";
+}
+
+/* 编辑联动：在中文视图下改内容，英文同步增删 */
+function onCaptionEdited(){
+  const path=state.selected;
+  if(!path) return;
+  const bi=biOf(path);
+  if(!bi||bi.mode!=="zh") return;
+
+  const newZh=$("#captionBox").value;
+  const res=syncEnFromZh(path,newZh);
+  if(!res) return;
+  bi.zh=newZh;
+  bi.en=res.en;
+  bi.segments=bi.segments.filter(sg=>res.en.includes(sg.en));
+
+  if(res.removed>0) log("dim",`中文改动：同步删除 ${res.removed} 个英文词段`);
+  if(res.added>0) log("warn",`中文新增 ${res.added} 段，英文无法自动对应，建议补译或改英文`);
+}
 
 $("#btnOpenImg").addEventListener("click",()=>{
   if(state.selected) window.open("/api/image?path="+encodeURIComponent(state.selected),"_blank");
@@ -2267,6 +2523,8 @@ es.onmessage=ev=>{
       }
       const to=m.meta&&m.meta.to?`${m.meta.to[0]}×${m.meta.to[1]}`:"";
       log("ok",`${m.name} 放大完成 ${to}`);
+      // 正在看这张图：立刻切成对比视图
+      if(state.selected===m.path) cmpSetup(m.path, true);
       break;}
     case "task_start":{
       const f=state.files.find(x=>x.path===m.path);
@@ -2588,7 +2846,10 @@ window.addEventListener("beforeunload",e=>{
   e.preventDefault(); e.returnValue="";
 });
 
-$("#captionBox").addEventListener("input",updateCapMeta);
+$("#captionBox").addEventListener("input",()=>{
+  updateCapMeta();
+  onCaptionEdited();
+});
 
 /* 触发词徽章 */
 function syncTriggerBadge(){

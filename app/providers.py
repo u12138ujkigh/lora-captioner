@@ -399,6 +399,119 @@ def caption_image(
     return text
 
 
+# --------------------------------------------------------------------------- #
+# Bing 免费翻译（无需密钥）
+# --------------------------------------------------------------------------- #
+import threading as _threading
+import re as _re
+import json as _json
+import urllib.parse as _urlparse
+import urllib.request as _urlreq
+import http.cookiejar as _cookiejar
+
+_BING_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0")
+_bing_lock = _threading.Lock()
+_bing_state = {"opener": None, "ig": None, "iid": None, "key": None,
+               "token": None, "ts": 0.0}
+
+
+def _system_proxy() -> str:
+    """读 Windows 系统代理（urllib 不像 curl 那样自动读）。"""
+    import os
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        v = os.environ.get(k)
+        if v:
+            return v
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+        if not enable:
+            return ""
+        server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        key.Close()
+        server = server.strip()
+        if "=" in server:                      # 形如 http=host:port;https=host:port
+            for part in server.split(";"):
+                if part.lower().startswith("https="):
+                    return "http://" + part.split("=", 1)[1]
+            for part in server.split(";"):
+                if part.lower().startswith("http="):
+                    return "http://" + part.split("=", 1)[1]
+            return ""
+        return "http://" + server
+    except Exception:
+        return ""
+
+
+def _bing_session(force: bool = False):
+    """建立/复用 Bing 翻译会话（IG/IID/abuse 参数，约 5 分钟有效）。"""
+    import time
+    with _bing_lock:
+        st = _bing_state
+        if not force and st["opener"] and (time.time() - st["ts"] < 240):
+            return st
+
+        proxy = _system_proxy()
+        handlers = []
+        if proxy:
+            handlers.append(_urlreq.ProxyHandler({"http": proxy, "https": proxy}))
+        cj = _cookiejar.CookieJar()
+        handlers.append(_urlreq.HTTPCookieProcessor(cj))
+        opener = _urlreq.build_opener(*handlers)
+
+        hdr = {"User-Agent": _BING_UA, "Accept": "*/*",
+               "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
+        html = opener.open(
+            _urlreq.Request("https://cn.bing.com/translator", headers=hdr),
+            timeout=25).read().decode("utf-8", "ignore")
+
+        ig = _re.search(r'IG:"([^"]+)"', html)
+        iid = _re.search(r'data-iid="([^"]+)"', html)
+        ab = _re.search(r'params_AbusePreventionHelper\s*=\s*\[(\d+),\s*"([^"]+)"', html)
+        if not (ig and ab):
+            raise ProviderError("Bing 会话建立失败（拿不到 IG/abuse 参数）")
+
+        st.update({"opener": opener, "ig": ig.group(1),
+                   "iid": iid.group(1) if iid else "translator.5023",
+                   "key": ab.group(1), "token": ab.group(2), "ts": time.time()})
+        return st
+
+
+def bing_translate(text: str, to_lang: str = "zh-Hans", from_lang: str = "en") -> str:
+    """用 Bing 免费接口翻译。失败抛 ProviderError。"""
+    if not text.strip():
+        return ""
+    st = _bing_session()
+    for attempt in (1, 2):
+        try:
+            url = ("https://cn.bing.com/ttranslatev3?isVertical=1"
+                   f"&&IG={st['ig']}&IID={st['iid']}")
+            body = _urlparse.urlencode({
+                "fromLang": from_lang, "text": text, "to": to_lang,
+                "token": st["token"], "key": st["key"],
+            }).encode()
+            req = _urlreq.Request(url, data=body, headers={
+                "User-Agent": _BING_UA,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": "https://cn.bing.com/translator",
+                "Origin": "https://cn.bing.com",
+                "X-Requested-With": "XMLHttpRequest",
+            })
+            raw = st["opener"].open(req, timeout=25).read().decode("utf-8", "ignore")
+            data = _json.loads(raw)
+            if isinstance(data, list) and data:
+                return data[0]["translations"][0]["text"]
+            raise ProviderError(f"Bing 返回异常：{raw[:120]}")
+        except Exception as e:
+            if attempt == 2:
+                raise ProviderError(f"Bing 翻译失败：{e}")
+            st = _bing_session(force=True)      # 会话过期，重建再试一次
+    return ""
+
+
 def translate_text(provider_id: str, model: str, text: str, timeout: float = 90.0) -> str:
     """把英文 caption 译成中文（展示用）。失败抛 ProviderError。"""
     channels = all_channels()
