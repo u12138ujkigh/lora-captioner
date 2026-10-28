@@ -20,3 +20,13 @@ desktop.ini
 _shots/
 *.bak-*
 
+
+# temp validation artifacts
+_c.js
+_vf*
+_probe*
+_onepass*
+_batchtest*
+_memtest*
+_updemo*
+_pickdemo*
