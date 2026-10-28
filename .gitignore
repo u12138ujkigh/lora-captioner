@@ -33,3 +33,6 @@ _pickdemo*
 
 # runtime user config
 ui_config.json
+
+# local commit message scratch
+_commit_msg.txt
