@@ -11,6 +11,7 @@ import os
 import queue
 import re
 import sys
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import captioner as cap
+from . import upscaler as upscaler
 from . import providers as prov
 
 APP_DIR = Path(__file__).resolve().parent
@@ -110,6 +112,11 @@ class StartRequest(BaseModel):
     shot_tags: bool = True    # 文件名构图标签联动（_head/_half/_full → caption 补构图词）
     folder_name: str = ""     # 数据集文件夹命名（{名}_{张数}；不进 caption）
     auto_rename: bool = False # 批次完成后自动重命名文件夹
+    # ---- SeedVR2 素材放大（先放大再打标）----
+    upscale: bool = False         # 是否在打标前放大
+    upscale_multiplier: float = 3.0
+    upscale_mode: str = "inplace"  # inplace=覆盖原图（原图备份）/ newfile=另存 _up 后缀
+    upscale_sharpen: bool = False  # 放大后锐化
 
 
 class EditRequest(BaseModel):
@@ -198,6 +205,16 @@ class ScanRequest(BaseModel):
 def api_scan2(req: ScanRequest):
     items = cap.scan_images(req.directory, req.recursive)
     return {"items": items, "count": len(items)}
+
+
+@app.get("/api/upscale/status")
+def api_upscale_status():
+    """放大能力自检：torch / CUDA / 模型文件是否齐全。"""
+    ok, msg = upscaler.available_for_webui()
+    return {"available": ok, "message": msg,
+            "multiplier": upscaler.CFG["multiplier"],
+            "unet": Path(upscaler.CFG["unet"]).name,
+            "vae": Path(upscaler.CFG["vae"]).name}
 
 
 @app.get("/api/config")
@@ -460,6 +477,44 @@ def api_queue_remove(payload: dict):
     return {"ok": True, "removed": removed}
 
 
+def _upscale_one(task, multiplier: float, sharpen: bool, mode: str) -> tuple[str, dict]:
+    """放大单张图（交给独立子进程，用 ComfyUI 的 torch 环境跑）。
+
+    返回 (给打标用的图片路径, meta)。
+    mode=inplace：覆盖原图，原图先备份为 .orig；
+    mode=newfile：另存 名字_up.jpg，原图不动。
+    """
+    from PIL import Image
+
+    src = Path(task.path)
+    try:
+        with Image.open(src) as im:
+            before = im.size
+    except Exception as e:
+        raise RuntimeError("读取原图失败：%s" % e)
+
+    if mode == "inplace":
+        target = src
+        backup = src.with_suffix(src.suffix + ".orig")
+        if not backup.exists():
+            shutil.copy2(src, backup)
+        dst = src
+    else:
+        target = src.with_name(src.stem + "_up" + src.suffix)
+        dst = target
+
+    res = upscaler.run_subprocess(str(src), str(dst), multiplier, sharpen)
+    if not res.get("ok"):
+        raise RuntimeError("放大失败：%s" % res.get("error", "未知错误"))
+
+    return str(target), {
+        "upscaled": True,
+        "from": list(before),
+        "to": [res.get("width"), res.get("height")],
+        "file": target.name,
+    }
+
+
 def _run_batch(params: dict):
     """后台线程：并发打标。"""
     try:
@@ -492,10 +547,29 @@ def _run_batch(params: dict):
                 emit({"type": "task_start", "path": task.path, "name": task.name})
                 t0 = time.time()
                 try:
+                    # ---- 先放大（可选）----
+                    caption_path = Path(task.path)
+                    up_meta = None
+                    if params.get("upscale"):
+                        emit({"type": "task_stage", "path": task.path,
+                              "name": task.name, "stage": "upscale"})
+                        caption_path, up_meta = _upscale_one(
+                            task,
+                            float(params.get("upscale_multiplier", 3.0)),
+                            bool(params.get("upscale_sharpen")),
+                            params.get("upscale_mode", "inplace"),
+                        )
+                        emit({"type": "task_upscaled", "path": task.path,
+                              "name": task.name, "meta": up_meta})
+                        if _batch.cancel_requested:
+                            return
+
+                    emit({"type": "task_stage", "path": task.path,
+                          "name": task.name, "stage": "caption"})
                     raw = prov.caption_image(
                         provider_id=params["provider_id"],
                         model=params["model"],
-                        image_path=Path(task.path),
+                        image_path=caption_path,
                         system_prompt=system_prompt,
                     )
                     text, meta = cap.assemble_caption(
@@ -508,6 +582,9 @@ def _run_batch(params: dict):
                         text = cap.ensure_shot_tag(text, cap.shot_tag_from_name(task.name))
                         meta = dict(meta or {})
                         meta["shot_tag"] = bool(cap.shot_tag_from_name(task.name))
+                    if up_meta:
+                        meta = dict(meta or {})
+                        meta.update(up_meta)
                     cp = Path(task.path).with_suffix(".txt")
                     task.backup = cap.backup_and_write(cp, text)
                     task.status = "done"
