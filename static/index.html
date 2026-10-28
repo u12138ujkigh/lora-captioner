@@ -400,33 +400,35 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .fbtn.active .n{color:var(--safe)}
 
 /* 样片网格 */
+/* 图片网格：JS 瀑布流。卡片高度由原图比例决定，不裁切图片。
+   逐个放进当前最矮的一列 —— 既保持左右方向阅读顺序，又填满空间。 */
 #fileGrid{
+  --col-w:126px;
   flex:1;overflow-y:auto;overflow-x:hidden;
-  padding:12px;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(124px,1fr));
-  gap:12px 10px;align-content:start;
+  padding:12px;
+  position:relative;      /* 卡片绝对定位的参照 */
   scrollbar-gutter:stable;
-  transition:grid-template-columns .2s var(--ease);
 }
-#fileGrid.ar-3-4{grid-template-columns:repeat(auto-fill,minmax(164px,1fr))}
-#fileGrid.ar-9-16{grid-template-columns:repeat(auto-fill,minmax(196px,1fr))}
-#fileGrid.ar-1-1{grid-template-columns:repeat(auto-fill,minmax(146px,1fr))}
-#fileGrid.ar-4-3{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}
-#fileGrid.ar-16-9{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+/* 等比缩放档位：只改列宽，比例始终跟随原图 */
+#fileGrid.ar-3-4{--col-w:150px}
+#fileGrid.ar-9-16{--col-w:178px}
+#fileGrid.ar-1-1{--col-w:134px}
+#fileGrid.ar-4-3{--col-w:112px}
+#fileGrid.ar-16-9{--col-w:98px}
 
-/* 样片卡：图片是主角，边框是裁切线 */
+/* 卡片：高度由图片决定，图片完整显示。位置由 JS 计算 */
 .fileCard{
-  position:relative;cursor:pointer;
-  border-radius:3px;
+  position:absolute;
+  cursor:pointer;
+  border-radius:4px;
   background:var(--paper-2);
   border:1px solid var(--rule);
   overflow:hidden;
+  display:block;
   transition:border-color .14s var(--ease),box-shadow .14s var(--ease);
   touch-action:manipulation;
   -webkit-tap-highlight-color:transparent;
-  /* 长列表虚拟化：屏幕外的卡不参与布局计算 */
-  content-visibility:auto;
-  contain-intrinsic-size:auto 140px;
+  contain:layout style;
 }
 .fileCard:hover{border-color:#556273}
 .fileCard.selected{
@@ -436,22 +438,18 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .fileCard:focus-visible{outline:2px solid var(--safe);outline-offset:2px}
 
 .fileCard img{
-  display:block;width:100%;height:104px;
-  object-fit:cover;
+  display:block;width:100%;
+  height:auto;              /* 高度由原图比例决定 */
+  object-fit:contain;       /* 不裁切，完整显示 */
   background:var(--paper);
-  transition:opacity .2s var(--ease),aspect-ratio .16s var(--ease);
+  transition:opacity .2s var(--ease);
 }
-.fileCard img.ar-1-1{aspect-ratio:1/1;height:auto}
-.fileCard img.ar-4-3{aspect-ratio:4/3;height:auto}
-.fileCard img.ar-3-4{aspect-ratio:3/4;height:auto}
-.fileCard img.ar-16-9{aspect-ratio:16/9;height:auto}
-.fileCard img.ar-9-16{aspect-ratio:9/16;height:auto}
-.fileCard img.ar-auto{height:104px;aspect-ratio:auto}
 
 /* 文件名：等宽，像样片编号 */
 .fileCard .fname{
   font-size:10px;letter-spacing:-.01em;
-  padding:3px 5px;color:var(--text-dim);
+  height:20px;line-height:20px;padding:0 5px;
+  color:var(--text-dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   border-top:1px solid var(--rule-soft);
   min-width:0;
@@ -488,7 +486,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 @keyframes pulse{50%{opacity:.35}}
 
 .empty-hint{
-  grid-column:1/-1;
+  position:static;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:6px;padding:72px 24px;
   color:var(--text-mute);font-size:12.5px;line-height:1.7;
@@ -914,7 +912,7 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   #topbar{gap:6px;padding:0 8px}
   #topbar .logo .ver{display:none}
   #statText{display:none}
-  #fileGrid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));padding:8px}
+  #fileGrid{--col-w:104px;padding:8px}
 }
 </style>
 </head>
@@ -1139,13 +1137,12 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
     <div id="gridHeader">
       <span class="title">文件列表</span>
       <span id="gridCount"></span>
-      <span class="arBtns" role="group" aria-label="缩略图比例">
-        <button class="arBtn active" data-ar="auto" aria-pressed="true">自适应</button>
-        <button class="arBtn" data-ar="1-1" aria-pressed="false">1:1</button>
-        <button class="arBtn" data-ar="4-3" aria-pressed="false">4:3</button>
-        <button class="arBtn" data-ar="3-4" aria-pressed="false">3:4</button>
-        <button class="arBtn" data-ar="16-9" aria-pressed="false">16:9</button>
-        <button class="arBtn" data-ar="9-16" aria-pressed="false">9:16</button>
+      <span class="arBtns" role="group" aria-label="缩略图大小">
+        <button class="arBtn active" data-ar="auto" aria-pressed="true" title="默认列宽">中</button>
+        <button class="arBtn" data-ar="1-1" aria-pressed="false" title="稍宽">大</button>
+        <button class="arBtn" data-ar="9-16" aria-pressed="false" title="最宽">特大</button>
+        <button class="arBtn" data-ar="4-3" aria-pressed="false" title="稍窄">小</button>
+        <button class="arBtn" data-ar="16-9" aria-pressed="false" title="最窄">特小</button>
       </span>
       <div style="flex:1"></div>
       <div id="filterBtns" role="group" aria-label="按状态筛选">
@@ -1447,7 +1444,9 @@ async function scanDir(){
   const prev=new Map(state.files.map(f=>[f.path,f]));
   state.files=(d.items||[]).map(it=>{
     const p=prev.get(it.path);
-    const base={path:it.path,name:it.name,status:it.has_caption?(p&&p.status!=="pending"?p.status:"skipped"):"pending",caption:"",error:"",duration_ms:0,size:it.size};
+    const base={path:it.path,name:it.name,status:it.has_caption?(p&&p.status!=="pending"?p.status:"skipped"):"pending",
+      caption:"",error:"",duration_ms:0,size:it.size,
+      w:it.width||0,h:it.height||0};
     return base;
   });
   renderGrid();
@@ -1473,9 +1472,41 @@ function statusOf(f){
     :state.filter==="done"?(f.status==="done"||f.status==="edited")
     :f.status===state.filter;
 }
+/* 瀑布流布局：把卡片逐个放进当前最矮的一列。
+   图片宽高来自后端扫描，布局时不需要等图片加载，也不做同步布局读取。 */
+const FNAME_H = 22;      // 文件名条高度（20px + 边框）
+const GAP_X = 10, GAP_Y = 10;
+function layoutMasonry(){
+  const grid=$("#fileGrid");
+  const cards=[...grid.querySelectorAll(".fileCard")];
+  if(!cards.length) return;
+
+  const avail=grid.clientWidth - 24;                 // 减去左右 padding
+  const minCol=parseInt(getComputedStyle(grid).getPropertyValue("--col-w"),10) || 126;
+  const cols=Math.max(1, Math.floor((avail + GAP_X) / (minCol + GAP_X)));
+  const cardW=Math.floor((avail - GAP_X*(cols-1)) / cols);
+  if(cardW<=0) return;
+
+  const heights=new Array(cols).fill(0);
+  cards.forEach(card=>{
+    const f=state.files.find(x=>x.path===card.dataset.path);
+    const w=f&&f.w>0?f.w:1, h=f&&f.h>0?f.h:1;
+    const imgH=Math.round(cardW * h / w);
+    const cardH=imgH + FNAME_H + 2;                  // + 上下边框
+    let col=0;
+    for(let i=1;i<cols;i++) if(heights[i]<heights[col]-0.5) col=i;   // 最矮列
+    card.style.left=(col*(cardW+GAP_X))+"px";
+    card.style.top=heights[col]+"px";
+    card.style.width=cardW+"px";
+    heights[col]+=cardH+GAP_Y;
+  });
+  grid.style.height=(Math.max(...heights) - GAP_Y + 24)+"px";
+}
+
 function renderGrid(){
   const grid=$("#fileGrid");
   grid.innerHTML="";
+  grid.style.height="";
   const files=state.files.filter(statusOf);
   $("#gridCount").textContent=state.files.length?`${files.length} / ${state.files.length} 张`:"";
   updateFilterCounts();
@@ -1483,6 +1514,7 @@ function renderGrid(){
     grid.innerHTML=state.files.length
       ? '<div class="empty-hint"><strong>这个筛选下没有文件</strong><span>换一个筛选条件，或点「全部」查看全部图片</span></div>'
       : '<div class="empty-hint"><strong>还没有扫描目录</strong><span>在左侧填入数据集路径，或点目录按钮浏览</span></div>';
+    grid.style.height="";
     return;
   }
   const frag=document.createDocumentFragment();
@@ -1494,7 +1526,11 @@ function renderGrid(){
     card.setAttribute("aria-selected",state.selected===f.path?"true":"false");
     card.tabIndex=0;
     card.title = f.name + (f.error ? "\n错误：" + f.error : "");
-    card.innerHTML=`<img loading="lazy" decoding="async" width="240" height="240" class="ar-${window._curAR||"auto"}" src="/api/image?path=${encodeURIComponent(f.path)}" alt="${f.name}">
+    // 用原图宽高做占位：加载前就按真实比例留出空间，避免瀑布流抖动
+    const imgAttrs = f.w>0 && f.h>0
+      ? `width="${f.w}" height="${f.h}" style="aspect-ratio:${f.w}/${f.h}"`
+      : 'style="aspect-ratio:1/1"';
+    card.innerHTML=`<img loading="lazy" decoding="async" ${imgAttrs} src="/api/image?path=${encodeURIComponent(f.path)}" alt="${f.name}">
       <div class="badge" aria-hidden="true"></div><div class="fname">${f.name}</div>
       <div class="errtag">${f.error||"错误"}</div>`;
     fadeInImg(card.querySelector("img"));
@@ -1505,6 +1541,7 @@ function renderGrid(){
     frag.appendChild(card);
   });
   grid.appendChild(frag);
+  layoutMasonry();
 }
 function updateFilterCounts(){
   const n={all:state.files.length,pending:0,done:0,error:0,skipped:0};
@@ -2163,7 +2200,8 @@ $("#logPanel .loghead").title="点击折叠/展开日志";
   });
 })();
 
-/* ===================== 预览比例切换 ===================== */
+/* ===================== 缩略图大小切换 ===================== */
+/* 只改列宽（缩略图大小），图片始终按原图比例完整显示，不做裁切 */
 $$(".arBtn").forEach(b=>b.addEventListener("click",()=>{
   $$(".arBtn").forEach(x=>{
     const on=x===b;
@@ -2171,18 +2209,20 @@ $$(".arBtn").forEach(b=>b.addEventListener("click",()=>{
     x.setAttribute("aria-pressed",on?"true":"false");
   });
   const ar=b.dataset.ar;
-  // 网格列宽联动（CSS 已按 .ar-x 定义列宽）
   const grid=$("#fileGrid");
   grid.classList.remove("ar-1-1","ar-4-3","ar-3-4","ar-16-9","ar-9-16","ar-auto");
   if(ar!=="auto") grid.classList.add("ar-"+ar);
-  // 卡片图比例
-  $$("#fileGrid .fileCard img").forEach(img=>{
-    img.className="ar-"+ar;
-  });
   window._curAR=ar;
-  // 持久化选择
   try{ localStorage.setItem("captioner_ar",ar); }catch(e){}
+  layoutMasonry();
 }));
+
+/* 窗口尺寸变化时重排（去抖） */
+let _rsT=null;
+window.addEventListener("resize",()=>{
+  clearTimeout(_rsT);
+  _rsT=setTimeout(layoutMasonry,120);
+});
 
 /* ===================== 文件夹命名 ===================== */
 function typeNameField(){

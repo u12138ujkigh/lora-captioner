@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "prompt_templates"
 
@@ -46,8 +48,21 @@ _BODY_RE = re.compile(
 )
 
 
+def _read_image_size(p: Path) -> tuple[int, int] | None:
+    """只读文件头取宽高，不解码像素。取不到返回 None（损坏或非标准格式）。"""
+    try:
+        with Image.open(p) as im:
+            return im.width, im.height
+    except Exception:
+        return None
+
+
 def scan_images(directory: str, recursive: bool = False) -> list[dict]:
-    """扫描目录内图片（按文件名排序）。返回 [{path, name, size, mtime, has_caption}]。"""
+    """扫描目录内图片（按文件名排序）。
+
+    返回 [{path, name, size, mtime, has_caption, width, height}]。
+    width/height 供前端按原图比例排版，避免统一裁切和加载抖动。
+    """
     root = Path(directory)
     if not root.is_dir():
         return []
@@ -57,12 +72,16 @@ def scan_images(directory: str, recursive: bool = False) -> list[dict]:
         if not p.is_file() or p.suffix.lower() not in IMAGE_EXTS:
             continue
         caption = p.with_suffix(".txt")
+        st = p.stat()
+        size = _read_image_size(p)
         items.append({
             "path": str(p),
             "name": p.name,
-            "size": p.stat().st_size,
-            "mtime": int(p.stat().st_mtime),
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
             "has_caption": caption.is_file(),
+            "width": size[0] if size else 0,
+            "height": size[1] if size else 0,
         })
     items.sort(key=lambda x: x["name"].lower())
     return items
