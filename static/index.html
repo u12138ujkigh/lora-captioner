@@ -1161,6 +1161,50 @@ body[data-mode="upscale"] #btnRetag,
 body[data-mode="upscale"] #btnTrans{
   display:none!important;
 }
+
+/* ---------- 手动选图 ---------- */
+.upSel{
+  display:flex;align-items:center;gap:3px;
+  padding-left:6px;border-left:1px solid var(--rule);
+}
+.upSelCount{
+  font-size:11px;color:var(--safe-bright);font-weight:600;
+  font-variant-numeric:tabular-nums;padding:0 4px;white-space:nowrap;
+}
+.upSelCount.zero{color:var(--text-mute);font-weight:400}
+
+/* 选中卡：蓝色实心边 + 左上勾 */
+.upCard.picked{
+  border-color:var(--safe);
+  box-shadow:0 0 0 2px var(--safe),0 0 0 6px rgba(74,158,255,.22);
+}
+.upCard .pick{
+  position:absolute;top:4px;left:4px;
+  width:16px;height:16px;border-radius:3px;
+  border:1.5px solid rgba(255,255,255,.55);
+  background:rgba(12,17,24,.72);
+  display:flex;align-items:center;justify-content:center;
+  font-size:10px;line-height:1;color:transparent;
+  transition:background-color .12s,border-color .12s;
+}
+.upCard.picked .pick{
+  background:var(--safe);border-color:var(--safe);color:#04121f;font-weight:900;
+}
+/* 角标往右让位给勾选框 */
+.upCard .ubadge{right:4px}
+
+/* 看对比的小眼睛按钮 */
+.upCard .eye{
+  position:absolute;bottom:23px;right:4px;
+  width:22px;height:22px;padding:0;
+  border-radius:4px;border:1px solid var(--rule);
+  background:rgba(12,17,24,.82);color:var(--text-dim);
+  font-size:11px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .12s,color .12s,border-color .12s;
+}
+.upCard:hover .eye{opacity:1}
+.upCard .eye:hover{color:var(--safe-bright);border-color:var(--safe)}
 </style>
 </head>
 <body>
@@ -1464,6 +1508,12 @@ body[data-mode="upscale"] #btnTrans{
           <button class="fbtn active" data-uo="all" aria-pressed="true">全览</button>
           <button class="fbtn" data-uo="done" aria-pressed="false">已放大</button>
           <button class="fbtn" data-uo="orig" aria-pressed="false">原图</button>
+        </div>
+        <div class="upSel" role="group" aria-label="批量选择">
+          <span class="upSelCount" id="upSelCount">已选 0</span>
+          <button class="btn small ghost" id="btnUpSelAll" title="全选当前筛选">全选</button>
+          <button class="btn small ghost" id="btnUpSelNone" title="清空选择">全不选</button>
+          <button class="btn small ghost" id="btnUpSelInv" title="反选当前筛选">反选</button>
         </div>
         <button class="btn small ghost" id="btnUpScan">扫描</button>
         <button class="btn small ghost" id="btnUpRetryFailed" hidden>重跑失败</button>
@@ -1780,7 +1830,8 @@ $("#upscaleMultiplier").addEventListener("change",syncUpscaleUI);
    up.filter / up.only : 筛选
 */
 const up = { items: [], tasks: [], filter: "all", only: "all",
-             scanned: false, outDir: "", selected: null };
+             scanned: false, outDir: "", selected: null,
+             picked: new Set() };   // 勾选的 path；切模式保留，刷新清空
 
 /* ---- 扫描预览 ---- */
 async function upScan(){
@@ -1801,6 +1852,9 @@ async function upScan(){
     up.items=d.items||[];
     up.outDir=d.out_dir;
     up.scanned=true;
+    // 清掉已不在目录里的勾选
+    const alive=new Set(up.items.map(i=>i.path));
+    [...up.picked].forEach(p=>{ if(!alive.has(p)) up.picked.delete(p); });
     renderUpGrid();
     log("info",`扫描 ${d.total} 张：待处理 ${d.pending}，已完成 ${d.already}`);
     return d;
@@ -1812,33 +1866,72 @@ async function upScan(){
 /* ---- 开始放大：先扫描，再确认 ---- */
 async function upStart(){
   if(!_upAvailable){ toast("放大环境不可用"); return; }
+
+  // 有勾选就只处理勾选的；没有就扫全部
+  const picked = pickedItems();
+  const usePicked = picked.length > 0;
+
   let d;
   try{ d=await upScan(); }catch(e){ toast("扫描失败："+e.message); return; }
   if(!d) return;
 
-  if(!d.pending){
-    toast(`全部 ${d.already} 张都已放大过，无需处理`);
+  // 待处理集合
+  let pending, already;
+  if(usePicked){
+    pending = picked.filter(i=>!i.done);
+    already = picked.filter(i=>i.done);
+  }else{
+    pending = up.items.filter(i=>!i.done);
+    already = up.items.filter(i=>i.done);
+  }
+
+  if(!pending.length && !already.length){
+    toast(usePicked ? "勾选的图片都已不存在" : "目录里没有图片");
     return;
   }
-  const msg = `即将放大 ${d.pending} 张图片\n\n`
-    + `源目录：${d.src_dir}\n`
-    + `输出到：${d.out_dir}\n`
-    + (d.already ? `${d.already} 张已存在，将跳过\n` : "")
-    + `倍数：${$("#upscaleMultiplier").value}×`;
-  if(!confirm(msg)) return;
+
+  // 只有已放大的：问是否覆盖重跑
+  let overwrite = false;
+  if(!pending.length && already.length){
+    if(!confirm(`勾选的 ${already.length} 张都已放大过。\n\n是否覆盖重跑？`)) return;
+    overwrite = true;
+    pending = already;
+  }else if(already.length){
+    // 混合：有新的、也有已放大的
+    const msg = `即将放大 ${pending.length} 张${usePicked?"（勾选）":""}\n\n`
+      + `源目录：${d.src_dir}\n`
+      + `输出到：${d.out_dir}\n`
+      + `倍数：${$("#upscaleMultiplier").value}×\n\n`
+      + `另有 ${already.length} 张已存在结果。\n`
+      + `点「确定」只跑新的；点「取消」先停下，\n`
+      + `想覆盖重跑请只勾选那 ${already.length} 张。`;
+    if(!confirm(msg)) return;
+  }else{
+    const msg = `即将放大 ${pending.length} 张${usePicked?"（勾选）":""}\n\n`
+      + `源目录：${d.src_dir}\n`
+      + `输出到：${d.out_dir}\n`
+      + `倍数：${$("#upscaleMultiplier").value}×`;
+    if(!confirm(msg)) return;
+  }
+
+  const body = {
+    directory:$("#dirInput").value.trim(),
+    recursive:$("#optRecursive").checked,
+    multiplier:parseFloat($("#upscaleMultiplier").value),
+    sharpen:$("#optUpscaleSharpen").checked,
+    skip_existing: !overwrite,
+  };
+  // 只处理勾选的（覆盖模式下也要指定）
+  if(usePicked) body.only_paths = pending.map(i=>i.path);
 
   const r=await fetch("/api/upscale/start",{method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      directory:$("#dirInput").value.trim(),
-      recursive:$("#optRecursive").checked,
-      multiplier:parseFloat($("#upscaleMultiplier").value),
-      sharpen:$("#optUpscaleSharpen").checked,
-      skip_existing:true,
-    })});
+    body:JSON.stringify(body)});
   const res=await r.json();
   if(res.error){ toast(res.error); log("err", res.error); return; }
-  log("info",`开始放大 ${res.total} 张${res.skipped?`（跳过 ${res.skipped}）`:""}`);
+
+  log("info",`开始放大 ${res.total} 张${overwrite?"（覆盖重跑）":""}`
+    + (res.skipped?`（跳过 ${res.skipped}）`:""));
   upSetRunning(true);
   startUpPolling();
 }
@@ -1945,7 +2038,8 @@ function renderUpGrid(){
     const st=it.state||(it.done?"done":"pending");
     card.className="upCard"
       + (st==="done"?" is-done":st==="error"?" is-error":st==="running"?" is-running":" is-pending")
-      + (up.selected===it.path?" selected":"");
+      + (up.selected===it.path?" selected":"")
+      + (up.picked.has(it.path)?" picked":"");
     card.dataset.path=it.path;
     card.tabIndex=0;
     card.title=it.name + (it.live&&it.live.error?"\n错误："+it.live.error:"");
@@ -1963,15 +2057,26 @@ function renderUpGrid(){
 
     card.innerHTML=`<img loading="lazy" decoding="async" width="${w}" height="${h}"
         style="aspect-ratio:${w}/${h}" src="${src}" alt="${it.name}">
+      <div class="pick" aria-hidden="true">✓</div>
       <div class="ubadge">${badge}</div>
       <div class="ushield">放大中…</div>
       ${dims?`<div class="udims">${dims}</div>`:""}
+      <button class="eye" type="button" title="查看这张的放大对比">◉</button>
       <div class="uname">${it.name}</div>`;
     card.querySelector("img").addEventListener("load",e=>{e.target.style.opacity=1;},{once:true});
     card.querySelector("img").style.opacity=0;
-    card.addEventListener("click",()=>upSelect(it.path));
+    // 点击整卡 = 选中/取消选中
+    card.addEventListener("click",e=>{
+      if(e.target.closest(".eye")) return;      // 眼睛按钮自己处理
+      upTogglePick(it.path);
+    });
     card.addEventListener("keydown",e=>{
-      if(e.key==="Enter"||e.key===" "){ e.preventDefault(); upSelect(it.path); }
+      if(e.key==="Enter"||e.key===" "){ e.preventDefault(); upTogglePick(it.path); }
+    });
+    // 眼睛按钮 = 看对比（不改变选中）
+    card.querySelector(".eye").addEventListener("click",e=>{
+      e.stopPropagation();
+      upSelect(it.path);
     });
     if(st==="error"){
       card.addEventListener("dblclick",()=>upRetry([it.path]));
@@ -1981,6 +2086,7 @@ function renderUpGrid(){
   });
   grid.appendChild(frag);
   upLayout();
+  renderPickCount();
 }
 
 /* 瀑布流布局（与打标网格同一套算法，独立尺寸控制） */
@@ -2012,6 +2118,62 @@ function upLayout(){
   });
   grid.style.height=(Math.max(...heights)-UP_GAP_Y+24)+"px";
 }
+
+/* 勾选/取消勾选（不打开对比） */
+function upTogglePick(path){
+  if(up.picked.has(path)) up.picked.delete(path);
+  else up.picked.add(path);
+  syncPickUI(path);
+}
+
+/* 只更新受影响卡片的类与计数，不重渲染整个网格 */
+function syncPickUI(path){
+  const card=document.querySelector(`.upCard[data-path="${CSS.escape(path)}"]`);
+  if(card) card.classList.toggle("picked", up.picked.has(path));
+  renderPickCount();
+}
+
+function renderPickCount(){
+  const n=up.picked.size;
+  const el=$("#upSelCount");
+  if(el){
+    el.textContent=`已选 ${n}`;
+    el.classList.toggle("zero", n===0);
+  }
+  // 开始放大按钮文案随选中数变化
+  const b=$("#btnUpStart");
+  if(b && !b.disabled){
+    b.textContent = n>0 ? `放大选中的 ${n} 张` : "开始放大";
+  }
+}
+
+function pickedItems(){
+  return up.items.filter(i=>up.picked.has(i.path));
+}
+
+/* 批量选择：作用于当前筛选下可见的图 */
+function upVisibleItems(){
+  return up.items.filter(upPass);
+}
+function upSelAll(){
+  upVisibleItems().forEach(i=>up.picked.add(i.path));
+  renderUpGrid();
+}
+function upSelNone(){
+  up.picked.clear();
+  renderUpGrid();
+}
+function upSelInv(){
+  upVisibleItems().forEach(i=>{
+    if(up.picked.has(i.path)) up.picked.delete(i.path);
+    else up.picked.add(i.path);
+  });
+  renderUpGrid();
+}
+
+$("#btnUpSelAll") && $("#btnUpSelAll").addEventListener("click",upSelAll);
+$("#btnUpSelNone") && $("#btnUpSelNone").addEventListener("click",upSelNone);
+$("#btnUpSelInv") && $("#btnUpSelInv").addEventListener("click",upSelInv);
 
 /* 点选：右栏看对比 */
 function upSelect(path){
@@ -2071,8 +2233,11 @@ $("#btnUpScan").addEventListener("click",()=>upScan());
 
 /* ---- 轮询 ---- */
 function upSetRunning(run){
-  $("#btnUpStart").disabled = run || !_upAvailable;
+  const b=$("#btnUpStart");
+  b.disabled = run || !_upAvailable;
   $("#btnUpStop").disabled = !run;
+  if(!run) renderPickCount();      // 恢复「放大选中的 N 张」
+  if(run) b.textContent = "放大中…";
 }
 
 function startUpPolling(){
@@ -2740,6 +2905,7 @@ $("#btnClear").addEventListener("click",async()=>{
     $("#statText").textContent="待命";
     $("#upStats").hidden=true;
     up.items=[]; up.tasks=[]; up.scanned=false; up.selected=null;
+    up.picked.clear();
     renderUpGrid();
     toast("放大记录已清空");
     return;
@@ -3318,6 +3484,13 @@ document.addEventListener("keydown",e=>{
     return;
   }
   // Esc：只关弹窗，不误伤其他状态
+  // 放大模式：Ctrl+A 全选当前筛选
+  if(_mode==="upscale" && (e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="a"){
+    const tag2=(e.target.tagName||"").toLowerCase();
+    if(tag2!=="input" && tag2!=="textarea"){
+      e.preventDefault(); upSelAll(); return;
+    }
+  }
   if(e.key==="Escape"){
     let closed=false;
     ["#modalOverlay","#auditOverlay","#replaceOverlay","#queueOverlay"].forEach(sel=>{
