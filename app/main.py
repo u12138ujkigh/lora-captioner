@@ -81,6 +81,8 @@ class StartRequest(BaseModel):
     recursive: bool = False
     limit: int = 0            # 0 = 全部；试跑模式传 2
     shot_tags: bool = True    # 文件名构图标签联动（_head/_half/_full → caption 补构图词）
+    folder_name: str = ""     # 数据集文件夹命名（{名}_{张数}；不进 caption）
+    auto_rename: bool = False # 批次完成后自动重命名文件夹
 
 
 class EditRequest(BaseModel):
@@ -455,6 +457,24 @@ def _run_batch(params: dict):
         stats = _batch.stats()
         emit({"type": "batch_done", "stats": stats,
               "cancelled": _batch.cancel_requested})
+        # 批次完成 → 自动重命名文件夹（auto_rename 且填了名字）
+        rename_result = None
+        if params.get("auto_rename") and params.get("folder_name", "").strip():
+            rename_result = cap.execute_folder_rename(
+                params["directory"], params["folder_name"])
+            if rename_result.get("ok") and not rename_result.get("unchanged"):
+                # 目录已改名：清任务（旧路径失效），通知前端更新目录框
+                with _batch_lock:
+                    _batch.tasks = []
+                    _batch.directory = ""
+                emit({"type": "renamed",
+                      "old_path": rename_result.get("old_path"),
+                      "new_path": rename_result["new_path"],
+                      "target": rename_result["target"]})
+            elif rename_result.get("error"):
+                emit({"type": "rename_failed", "error": rename_result["error"]})
+        emit({"type": "batch_after", "stats": stats,
+              "rename": rename_result})
         # 队列推进：批次结束后自动开下一个
         if _queue:
             threading.Thread(target=_queue_advance, daemon=True).start()
@@ -685,6 +705,32 @@ async def api_events():
                 continue
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class RenameRequest(BaseModel):
+    directory: str
+    name: str          # 人物名 / LoRA 名；空则用目录现名
+
+
+@app.get("/api/rename/preview")
+def api_rename_preview(directory: str, name: str = ""):
+    return cap.propose_folder_rename(directory, name)
+
+
+@app.post("/api/rename/execute")
+def api_rename_execute(req: RenameRequest):
+    """执行文件夹重命名。重命名后清空当前批次（路径已失效）。"""
+    result = cap.execute_folder_rename(req.directory, req.name)
+    if result.get("error"):
+        return JSONResponse(result, status_code=400)
+    if result.get("ok") and not result.get("unchanged"):
+        # 目录变了，旧任务路径全部失效 → 清批
+        with _batch_lock:
+            _batch.tasks = []
+            _batch.directory = ""
+        emit({"type": "renamed", "old_path": result.get("old_path"),
+              "new_path": result["new_path"], "target": result["target"]})
+    return result
 
 
 @app.get("/api/template")

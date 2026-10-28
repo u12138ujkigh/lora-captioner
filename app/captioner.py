@@ -228,6 +228,65 @@ def backup_and_write(caption_path: Path, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# 数据集文件夹重命名（{名字}_{张数}）
+# --------------------------------------------------------------------------- #
+def sanitize_folder_name(name: str) -> str:
+    """清理成合法文件夹名：去 Windows 非法字符、控制首尾空格点、压缩空白。"""
+    name = (name or "").strip()
+    name = re.sub(r'[\\/:*?"<>|]', "_", name)     # Windows 非法字符
+    name = re.sub(r"\s+", "_", name)              # 空格 → 下划线
+    name = name.strip(" .")
+    return name
+
+
+def propose_folder_rename(directory: str, name: str) -> dict:
+    """计算目标文件夹名 {name}_{张数}。不执行，只返回提案。
+
+    张数 = 目录内图片数（不含子目录）。名字为空时用目录现名做前缀。
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        return {"error": f"目录不存在: {directory}"}
+    items = scan_images(directory, recursive=False)
+    count = len(items)
+    if not count:
+        return {"error": "目录里没有图片，不重命名"}
+    base = sanitize_folder_name(name) or sanitize_folder_name(root.name)
+    target = f"{base}_{count}"
+    current = root.name
+    if current == target:
+        return {"directory": str(root), "current": current, "target": target,
+                "count": count, "unchanged": True}
+    # 冲突检测：同级已有同名目录
+    parent = root.parent
+    clash = (parent / target).exists() and (parent / target) != root
+    return {"directory": str(root), "current": current, "target": target,
+            "count": count, "clash": clash, "unchanged": False}
+
+
+def execute_folder_rename(directory: str, name: str) -> dict:
+    """执行重命名。返回新路径。冲突时自动追加 -2/-3 后缀。"""
+    proposal = propose_folder_rename(directory, name)
+    if proposal.get("error"):
+        return proposal
+    if proposal.get("unchanged"):
+        return {"ok": True, "new_path": directory, "unchanged": True,
+                "target": proposal["target"]}
+    root = Path(directory)
+    parent = root.parent
+    target = proposal["target"]
+    if proposal.get("clash"):
+        i = 2
+        while (parent / f"{target}-{i}").exists():
+            i += 1
+        target = f"{target}-{i}"
+    new_path = parent / target
+    root.rename(new_path)
+    return {"ok": True, "new_path": str(new_path), "target": target,
+            "old_path": str(root)}
+
+
+# --------------------------------------------------------------------------- #
 # 文件名构图标签联动（caiyaer50 惯例：001_head / 017_half / 033_full）
 # --------------------------------------------------------------------------- #
 SHOT_TAG_MAP = {

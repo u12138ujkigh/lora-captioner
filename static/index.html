@@ -232,12 +232,12 @@ textarea{font-family:inherit}
     <div id="personFields">
       <div class="secTitle">人物设置</div>
       <div class="field" style="margin-bottom:8px">
-        <label>人物名字（如 Yanni）</label>
-        <input type="text" id="personName" placeholder="留空则用触发词模式">
-        <div class="hint">填名字 → caption 以人名开头；不填 → 走泛化触发词</div>
+        <label>人物名字（用于文件夹命名，不进 caption）</label>
+        <input type="text" id="personName" placeholder="如 Yanni → Yanni_50">
+        <div class="hint">批次完成后文件夹改名为 {名字}_{张数}</div>
       </div>
       <div class="field">
-        <label>泛化主体（人名留空时用）</label>
+        <label>泛化主体（caption 开头用）</label>
         <input type="text" id="genericSubject" placeholder="a young East Asian woman">
       </div>
     </div>
@@ -245,25 +245,37 @@ textarea{font-family:inherit}
     <div id="clothingFields" style="display:none">
       <div class="secTitle">服装设置</div>
       <div class="field" style="margin-bottom:8px">
-        <label>服装 LoRA 名称</label>
-        <input type="text" id="clothingName" placeholder="hanfu_outfit">
+        <label>服装 LoRA 名称（文件夹命名用）</label>
+        <input type="text" id="clothingName" placeholder="hanfu_outfit → hanfu_outfit_30">
       </div>
     </div>
 
     <div id="styleFields" style="display:none">
       <div class="secTitle">风格设置</div>
       <div class="field" style="margin-bottom:8px">
-        <label>风格 LoRA 名称（如 XiuRen_Style）</label>
-        <input type="text" id="styleName" placeholder="XiuRen_Style">
+        <label>风格 LoRA 名称（文件夹命名用）</label>
+        <input type="text" id="styleName" placeholder="XiuRen_Style → XiuRen_Style_100">
       </div>
     </div>
 
     <div id="bodyFields" style="display:none">
       <div class="secTitle">身材设置</div>
       <div class="field" style="margin-bottom:8px">
-        <label>身材 LoRA 名称（如 slim_waist_body）</label>
-        <input type="text" id="bodyName" placeholder="slim_waist_body">
+        <label>身材 LoRA 名称（文件夹命名用）</label>
+        <input type="text" id="bodyName" placeholder="slim_waist_body → slim_waist_body_41">
         <div class="hint">caption 只写服装/姿态/场景，体型本身交给 LoRA 学</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="secTitle">文件夹命名</div>
+      <div class="switchRow"><span>批次完成后自动重命名</span><input type="checkbox" id="optAutoRename"></div>
+      <div class="field" style="margin-top:6px">
+        <div style="display:flex;gap:6px">
+          <input type="text" id="renameName" placeholder="名字（自动带出当前类型名）" style="flex:1">
+          <button class="btn small" id="btnRenameNow" title="立即把当前目录重命名为 {名字}_{张数}">📁 改名</button>
+        </div>
+        <div class="hint" id="renameHint">→ {名字}_{图片张数}，冲突自动加 -2 后缀</div>
       </div>
     </div>
 
@@ -756,6 +768,7 @@ $("#btnStart").addEventListener("click",async()=>{
       skip_existing:$("#optSkip").checked, concurrency:+$("#optConcurrency").value,
       recursive:$("#optRecursive").checked, limit:trial?2:0,
       shot_tags:$("#optShotTags").checked,
+      folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
     })});
   const d=await r.json();
   if(d.error){ toast(d.error); log("err",d.error); return; }
@@ -955,6 +968,7 @@ function collectStartParams(extra={}){
     skip_existing:$("#optSkip").checked, concurrency:+$("#optConcurrency").value,
     recursive:$("#optRecursive").checked, limit:$("#optTrial").checked?2:0,
     shot_tags:$("#optShotTags").checked,
+    folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
   },extra);
 }
 $("#btnQueueAdd").addEventListener("click",async()=>{
@@ -1092,6 +1106,19 @@ es.onmessage=ev=>{
       log("err",`队列跳过 ${m.directory}: ${m.error}`);
       renderQueueBadge();
       break;
+    case "renamed":{
+      // 文件夹已重命名：更新目录框并提示重新扫描
+      $("#dirInput").value=m.new_path;
+      state.files=[]; state.selected=null;
+      $("#previewBody").style.display="none"; $("#previewEmpty").style.display="flex";
+      log("ok",`📁 文件夹已自动改名: ${m.old_path.split("\\").pop()} → ${m.target}`);
+      toast(`文件夹已改名 → ${m.target}`);
+      const oldDir=m.old_path;
+      scanDir();
+      break;}
+    case "rename_failed":
+      log("err","自动改名失败: "+m.error);
+      break;
   }
 };
 es.onerror=()=>{ /* SSE 断线自动重连 */ };
@@ -1110,6 +1137,7 @@ async function restoreConfig(){
     if(c.extra_instructions) $("#extraInstr").value=c.extra_instructions;
     if(c.skip_existing!==undefined) $("#optSkip").checked=c.skip_existing;
     if(c.shot_tags!==undefined) $("#optShotTags").checked=c.shot_tags;
+    if(c.auto_rename!==undefined) $("#optAutoRename").checked=c.auto_rename;
     if(c.concurrency) { $("#optConcurrency").value=c.concurrency; $("#concVal").textContent=c.concurrency; }
     if(c.recursive!==undefined) $("#optRecursive").checked=c.recursive;
     if(c.lora_type){
@@ -1162,6 +1190,43 @@ $$(".arBtn").forEach(b=>b.addEventListener("click",()=>{
   });
   window._curAR=ar;
 }));
+
+/* ===================== 文件夹命名 ===================== */
+function typeNameField(){
+  return {person:"personName",clothing:"clothingName",style:"styleName",body:"bodyName"}[state.type]||"personName";
+}
+function currentFolderName(){
+  return $("#"+typeNameField()).value.trim()||$("#renameName").value.trim();
+}
+// 类型名输入 → 同步到改名框；改名框输入 → 回写类型名（双向，以最后编辑的为准）
+function bindNameSync(srcId){
+  $("#"+srcId).addEventListener("input",()=>{ $("#renameName").value=$("#"+srcId).value; });
+}
+["personName","clothingName","styleName","bodyName"].forEach(bindNameSync);
+$("#renameName").addEventListener("input",()=>{
+  const t=$("#"+typeNameField());
+  if(t && document.activeElement!==t) t.value=$("#renameName").value;
+});
+$("#btnRenameNow").addEventListener("click",async()=>{
+  const dir=$("#dirInput").value.trim();
+  if(!dir){ toast("先选目录"); return; }
+  const name=currentFolderName();
+  // 先预览
+  const pv=await (await fetch(`/api/rename/preview?directory=${encodeURIComponent(dir)}&name=${encodeURIComponent(name)}`)).json();
+  if(pv.error){ toast(pv.error); return; }
+  if(pv.unchanged){ toast(`目录已经是 ${pv.target}，无需改名`); return; }
+  if(!confirm(`重命名文件夹：\n  ${pv.current}\n→ ${pv.target}${pv.clash?"\n⚠ 同级已有同名，将自动加后缀":""}\n\n继续？`)) return;
+  const r=await fetch("/api/rename/execute",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:dir,name})});
+  const d=await r.json();
+  if(d.error){ toast(d.error); return; }
+  if(d.unchanged){ toast("无需改名"); return; }
+  $("#dirInput").value=d.new_path;
+  state.files=[];
+  log("ok",`文件夹已改名: ${d.old_path.split("\\").pop()} → ${d.target}（路径已失效，任务已清，请重新扫描）`);
+  toast(`已改名 → ${d.target}`);
+  await scanDir();
+});
 
 /* ===================== 键盘导航 ===================== */
 document.addEventListener("keydown",e=>{
