@@ -1428,6 +1428,11 @@ body[data-mode="upscale"] #btnTrans{
           <select id="modelSel"><option>先选 Provider</option></select>
           <div class="hint" id="modelHint"></div>
         </div>
+        <div class="field" id="effortField" hidden>
+          <label for="effortSel">思考强度</label>
+          <select id="effortSel"></select>
+          <div class="hint" id="effortHint">越高越慢但通常更准确</div>
+        </div>
         <div class="field">
           <label for="transModelSel">翻译模型（英文转中文展示）</label>
           <select id="transModelSel"><option>跟打标模型一致</option></select>
@@ -1658,6 +1663,7 @@ let state = {
   // 双语缓存：{path: {en, zh, segments:[{en,zh}], mode:"en"|"zh"}}
   bi: {},
   biMode: "en",
+  curEffort: "",
   providers: [],
   curProvider: "",
   curModel: "",
@@ -2351,6 +2357,7 @@ function onProviderChange(){
   $("#modelHint").textContent = p.kind==="ollama" ? "本地 Ollama；模型不支持看图时会返回空" : "DSH 渠道模型，能否看图以渠道名册标注为准";
   fillTransModels(p);
   syncEngineBadge();
+  syncEffortOptions();
 }
 function fillTransModels(p){
   const tsel=$("#transModelSel"); const cur=tsel.value;
@@ -2359,7 +2366,78 @@ function fillTransModels(p){
   tsel.value=cur;
 }
 $("#providerSel").addEventListener("change",onProviderChange);
-$("#modelSel").addEventListener("change",()=>{ state.curModel=$("#modelSel").value; });
+$("#modelSel").addEventListener("change",()=>{
+  state.curModel=$("#modelSel").value;
+  syncEffortOptions();
+});
+
+/* ===================== 思考强度（按 API 动态生成） ===================== */
+/*
+  网关 /models 对每个模型返回 reasoning.efforts，选项各不相同：
+  有的是 off/low/high/max，有的只有 on/off，有的低/中/高/极高。
+  所以这里不写死任何档位，全部按接口返回渲染。
+*/
+function currentModelInfo(){
+  const pid=$("#providerSel").value, mid=$("#modelSel").value;
+  const p=state.providers.find(x=>x.provider_id===pid);
+  if(!p) return null;
+  return (p.models||[]).find(m=>m.id===mid)||null;
+}
+
+function syncEffortOptions(){
+  const field=$("#effortField");
+  const sel=$("#effortSel");
+  const hint=$("#effortHint");
+  if(!field||!sel) return;
+
+  const m=currentModelInfo();
+  const efforts=(m&&m.efforts)||[];
+
+  // 该模型不支持：整块隐藏
+  if(!efforts.length){
+    field.hidden=true;
+    sel.innerHTML="";
+    state.curEffort="";
+    return;
+  }
+  field.hidden=false;
+
+  const prev=state.curEffort||"";
+  sel.innerHTML="";
+
+  // 第一项：跟随服务端默认（不下发参数）
+  const auto=document.createElement("option");
+  auto.value="";
+  auto.textContent = m.effort_default
+    ? `默认（${effortLabel(efforts, m.effort_default)}）`
+    : "默认";
+  sel.appendChild(auto);
+
+  efforts.forEach(e=>{
+    const o=document.createElement("option");
+    o.value=e.id;
+    o.textContent=e.name||e.id;
+    if(e.canonical) o.title=e.canonical;
+    sel.appendChild(o);
+  });
+
+  // 恢复上次选择（同一模型才保留）
+  if(prev && efforts.some(e=>e.id===prev)) sel.value=prev;
+  else sel.value="";
+
+  state.curEffort=sel.value;
+  hint.textContent = `${efforts.length} 档可选 · 越高越慢，通常更准`;
+  hint.title = "选项来自渠道接口的实际声明";
+}
+
+function effortLabel(efforts, id){
+  const e=efforts.find(x=>x.id===id||x.canonical===id);
+  return e ? (e.name||e.id) : id;
+}
+
+$("#effortSel") && $("#effortSel").addEventListener("change",()=>{
+  state.curEffort=$("#effortSel").value;
+});
 $("#btnRefreshProv").addEventListener("click",async()=>{
   const btn=$("#btnRefreshProv"); btn.disabled=true; btn.textContent="⏳ 刷新中…";
   try{ await loadProviders(true); toast("引擎列表已刷新"); }
@@ -2694,6 +2772,7 @@ function collectParams(extra={}){
     trigger_position:$("#triggerPosition").value,
     style_hint:$("#styleHint").value.trim(),
     extra_instructions:$("#extraInstr").value.trim(),
+    effort:$("#effortSel")?$("#effortSel").value:"",
   },extra);
 }
 
@@ -2883,6 +2962,7 @@ $("#btnStart").addEventListener("click",async()=>{
       recursive:$("#optRecursive").checked, limit:trial?2:0,
       shot_tags:$("#optShotTags").checked,
       folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
+      effort:$("#effortSel")?$("#effortSel").value:"",
       upscale:false,
     })});
   const d=await r.json();
@@ -3119,6 +3199,7 @@ function collectStartParams(extra={}){
     recursive:$("#optRecursive").checked, limit:$("#optTrial").checked?2:0,
     shot_tags:$("#optShotTags").checked,
     folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
+    effort:$("#effortSel")?$("#effortSel").value:"",
     upscale:false,
   },extra);
 }
@@ -3647,6 +3728,7 @@ $("#triggerWord").addEventListener("input",syncTriggerBadge);
   await restoreConfig();
   await loadProviders();
   await loadUpscaleStatus();
+  syncEffortOptions();
   setMode("caption", true);
   applyType(state.type);
   syncDirBadge(); syncEngineBadge(); syncTriggerBadge();

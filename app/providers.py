@@ -121,6 +121,9 @@ class ModelInfo:
     id: str
     name: str = ""
     vision: bool = True  # DSH 渠道模型默认视为可看图；Ollama 由探测决定
+    # 思考强度：网关 /models 返回的 reasoning.efforts。空列表=该模型不支持
+    efforts: list = field(default_factory=list)
+    effort_default: str = ""
 
 
 @dataclass
@@ -131,6 +134,53 @@ class ProviderChannel:
     base_url: str
     api_key: str = ""         # 仅 dsh
     models: list[ModelInfo] = field(default_factory=list)
+
+
+def _fetch_reasoning_map(base_url: str, api_key: str,
+                          timeout: float = 12.0) -> dict[str, dict]:
+    """向网关 /models 取每个模型的 reasoning 能力。
+
+    返回 {model_id: {"efforts":[{id,name,canonical}...], "default":str}}。
+    拿不到就返回空 dict —— 前端据此不显示思考强度选项。
+    """
+    if not api_key:
+        return {}
+    try:
+        import httpx
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(base_url.rstrip("/") + "/models",
+                      headers={"Authorization": "Bearer " + api_key})
+            if r.status_code != 200:
+                return {}
+            data = r.json()
+    except Exception:
+        return {}
+
+    items = data.get("data") or data.get("models") or []
+    out: dict[str, dict] = {}
+    for m in items:
+        mid = str((m or {}).get("id") or "").strip()
+        if not mid:
+            continue
+        rs = m.get("reasoning")
+        if not rs:
+            continue
+        efforts = []
+        for e in (rs.get("efforts") or []):
+            if not isinstance(e, dict):
+                continue
+            eid = str(e.get("id") or "").strip()
+            if not eid:
+                continue
+            efforts.append({
+                "id": eid,
+                "name": str(e.get("name") or eid).strip(),
+                "canonical": str(e.get("canonical") or "").strip(),
+            })
+        if efforts:
+            out[mid] = {"efforts": efforts,
+                        "default": str(rs.get("default") or "").strip()}
+    return out
 
 
 def _channel_models(provider_cfg: dict) -> list[str]:
@@ -162,10 +212,19 @@ def list_dsh_channels() -> list[ProviderChannel]:
             continue
         key = _read_dsh_key(str(raw_cfg.get("apiKeyEnv") or "").strip())
         label = str(raw_cfg.get("displayName") or "").strip() or channel_id
-        models = [ModelInfo(id=mid) for mid in _channel_models(raw_cfg)]
+        base = base_url.rstrip("/")
+        rmap = _fetch_reasoning_map(base, key)
+        models = []
+        for mid in _channel_models(raw_cfg):
+            rs = rmap.get(mid) or {}
+            models.append(ModelInfo(
+                id=mid,
+                efforts=rs.get("efforts", []),
+                effort_default=rs.get("default", ""),
+            ))
         channels.append(ProviderChannel(
             provider_id=f"dsh:{channel_id}", label=label, kind="dsh",
-            base_url=base_url.rstrip("/"), api_key=key, models=models,
+            base_url=base, api_key=key, models=models,
         ))
         seen.add(channel_id)
     builtin_models = [
@@ -177,10 +236,17 @@ def list_dsh_channels() -> list[ProviderChannel]:
         if channel_id in seen or not builtin_models:
             continue
         key = _read_dsh_key(env)
+        rmap = _fetch_reasoning_map(base_url, key)
+        models = []
+        for m in builtin_models:
+            rs = rmap.get(m) or {}
+            models.append(ModelInfo(
+                id=m, efforts=rs.get("efforts", []),
+                effort_default=rs.get("default", ""),
+            ))
         channels.append(ProviderChannel(
             provider_id=f"dsh:{channel_id}", label=display, kind="dsh",
-            base_url=base_url, api_key=key,
-            models=[ModelInfo(id=m) for m in builtin_models],
+            base_url=base_url, api_key=key, models=models,
         ))
         seen.add(channel_id)
     return channels
@@ -326,9 +392,14 @@ def caption_image(
     model: str,
     image_path: Path,
     system_prompt: str,
+    effort: str = "",
     timeout: float = 180.0,
 ) -> str:
-    """单图打标：返回清洗后的 caption 文本。失败抛 ProviderError。"""
+    """单图打标：返回清洗后的 caption 文本。失败抛 ProviderError。
+
+    effort 是思考强度（如 low/high/max），来自网关 /models 的 reasoning.efforts。
+    留空则不下发，用服务端默认。
+    """
     b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
     mime = "image/jpeg"
     suffix = Path(image_path).suffix.lower()
@@ -378,6 +449,9 @@ def caption_image(
             "max_tokens": 600,
             "temperature": 0.4,
         }
+        # 思考强度：按网关声明下发的值，留空就不传（用服务端默认）
+        if effort:
+            payload["reasoning_effort"] = effort
         url = f"{ch.base_url}/chat/completions"
         headers = {"Content-Type": "application/json",
                    "Authorization": f"Bearer {ch.api_key}"}

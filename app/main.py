@@ -122,6 +122,7 @@ class StartRequest(BaseModel):
     folder_name: str = ""     # 数据集文件夹命名（{名}_{张数}；不进 caption）
     auto_rename: bool = False # 批次完成后自动重命名文件夹
     # ---- SeedVR2 素材放大（先放大再打标）----
+    effort: str = ""              # 思考强度（来自网关 reasoning.efforts）
     upscale: bool = False         # 是否在打标前放大
     upscale_multiplier: float = 3.0
     upscale_mode: str = "inplace"  # inplace=覆盖原图（原图备份）/ newfile=另存 _up 后缀
@@ -147,6 +148,7 @@ class RetagRequest(BaseModel):
     style_hint: str = ""
     extra_instructions: str = ""
     shot_tags: bool = True
+    effort: str = ""
 
 
 class RetagManyRequest(BaseModel):
@@ -161,6 +163,7 @@ class RetagManyRequest(BaseModel):
     style_hint: str = ""
     extra_instructions: str = ""
     shot_tags: bool = True
+    effort: str = ""
     concurrency: int = 3
 
 
@@ -213,7 +216,12 @@ def api_providers(refresh: bool = False):
             "provider_id": pid,
             "label": ch.label,
             "kind": ch.kind,
-            "models": [{"id": m.id, "name": m.name or m.id, "vision": m.vision} for m in ch.models],
+            "models": [{
+                "id": m.id, "name": m.name or m.id, "vision": m.vision,
+                # 思考强度选项，来自网关 /models 的 reasoning.efforts
+                "efforts": m.efforts,
+                "effort_default": m.effort_default,
+            } for m in ch.models],
         })
     return {"providers": out}
 
@@ -820,6 +828,7 @@ def _run_batch(params: dict):
                         model=params["model"],
                         image_path=caption_path,
                         system_prompt=system_prompt,
+                        effort=params.get("effort", ""),
                     )
                     text, meta = cap.assemble_caption(
                         raw, params["lora_type"],
@@ -970,6 +979,7 @@ def api_retag(req: RetagRequest):
         raw = prov.caption_image(
             provider_id=req.provider_id, model=req.model,
             image_path=Path(req.path), system_prompt=system_prompt,
+            effort=req.effort,
         )
         text, meta = cap.assemble_caption(raw, req.lora_type, req.trigger_word, req.trigger_position)
         if req.shot_tags:
@@ -1032,6 +1042,7 @@ def api_retag_many_sync(req: RetagManyRequest):
             raw = prov.caption_image(
                 provider_id=req.provider_id, model=req.model,
                 image_path=Path(p), system_prompt=system_prompt,
+                effort=req.effort,
             )
             text, meta = cap.assemble_caption(raw, req.lora_type, req.trigger_word, req.trigger_position)
             if req.shot_tags:
