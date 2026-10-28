@@ -112,9 +112,9 @@ input[type=range]{accent-color:var(--acc);width:110px}
 /* 模态 */
 #modalOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:center;justify-content:center}
 #modalOverlay.show{display:flex}
-#promptModal{width:min(720px,90vw);max-height:80vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+#promptModal{width:min(900px,92vw);max-height:88vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;resize:both;min-width:520px;min-height:380px}
 #promptModal .mhead{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600}
-#promptModal textarea{flex:1;margin:12px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-family:Consolas,monospace;font-size:12px;line-height:1.6;resize:none;outline:none}
+#promptModal textarea{flex:1;margin:12px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-family:Consolas,monospace;font-size:12.5px;line-height:1.7;resize:none;outline:none}
 #promptModal .mfoot{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;font-size:12px;color:var(--skip)}
 .modal2{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:center;justify-content:center}
 .modal2.show{display:flex}
@@ -155,11 +155,24 @@ textarea{font-family:inherit}
 ::-webkit-scrollbar-thumb:hover{background:#435070}
 ::-webkit-scrollbar-track{background:transparent}
 
-/* 日志面板折叠 */
-#logPanel{transition:height .2s}
-#logPanel.collapsed{height:34px}
+/* 日志面板折叠 + 拖拽调高 */
+#logPanel{transition:none;position:relative}
+#logPanel.collapsed{height:34px!important}
 #logPanel.collapsed #logBox{display:none}
+#logPanel.collapsed .logDrag{display:none}
 #logPanel .loghead{cursor:pointer;user-select:none}
+#logDrag{position:absolute;top:-5px;left:0;right:0;height:9px;cursor:ns-resize;z-index:5}
+#logDrag::after{content:"···";position:absolute;top:0;left:50%;transform:translateX(-50%);color:var(--skip);font-size:11px;letter-spacing:2px;line-height:5px}
+#logDrag:hover::after{color:var(--acc)}
+/* 预览比例切换 */
+.arBtn{padding:2px 8px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;font-size:10.5px}
+.arBtn.active{border-color:var(--acc);color:var(--acc2);background:rgba(91,140,255,.12)}
+.fileCard img.ar-1-1{aspect-ratio:1/1;height:auto}
+.fileCard img.ar-4-3{aspect-ratio:4/3;height:auto}
+.fileCard img.ar-3-4{aspect-ratio:3/4;height:auto}
+.fileCard img.ar-16-9{aspect-ratio:16/9;height:auto}
+.fileCard img.ar-9-16{aspect-ratio:9/16;height:auto}
+.fileCard img.ar-auto{height:110px;aspect-ratio:auto}
 /* 完成横幅 */
 .doneBanner{margin:0 12px 8px;padding:10px 16px;border-radius:9px;background:rgba(63,185,111,.14);
   border:1px solid var(--ok);color:var(--ok);font-size:13px;font-weight:600;text-align:center;
@@ -310,6 +323,14 @@ textarea{font-family:inherit}
     <div id="gridHeader">
       <span class="title">文件列表</span>
       <span class="stat" id="gridCount" style="color:var(--dim);font-size:12px"></span>
+      <span style="display:flex;gap:4px;margin-left:6px" title="缩略图预览比例">
+        <button class="arBtn active" data-ar="auto">自适应</button>
+        <button class="arBtn" data-ar="1-1">1:1</button>
+        <button class="arBtn" data-ar="4-3">4:3</button>
+        <button class="arBtn" data-ar="3-4">3:4</button>
+        <button class="arBtn" data-ar="16-9">16:9</button>
+        <button class="arBtn" data-ar="9-16">9:16</button>
+      </span>
       <div style="flex:1"></div>
       <div id="filterBtns">
         <button class="fbtn active" data-f="all">全部</button>
@@ -323,6 +344,7 @@ textarea{font-family:inherit}
     <div id="fileGrid"><div class="empty-hint">左侧选目录后自动扫描；或点「重新扫描」</div></div>
     <div class="kbdHint">←/→ 切换图片 · Esc 关闭弹窗 · 点日志标题栏折叠日志</div>
     <div id="logPanel">
+      <div id="logDrag"></div>
       <div class="loghead"><span>处理日志</span><button class="btn small ghost" id="btnCopyLog">复制</button></div>
       <div id="logBox"></div>
     </div>
@@ -361,7 +383,12 @@ textarea{font-family:inherit}
 <!-- 质检面板 -->
 <div id="auditOverlay" class="modal2">
   <div class="modal2Box" style="width:min(860px,92vw)">
-    <div class="mhead"><span>🔍 质检报告 <span id="auditSummary" style="color:var(--dim);font-weight:400;font-size:12px"></span></span><button class="btn small ghost" id="btnCloseAudit">✕</button></div>
+    <div class="mhead"><span>🔍 质检报告 <span id="auditSummary" style="color:var(--dim);font-weight:400;font-size:12px"></span></span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn small primary" id="btnAuditRetagAll" style="display:none">🔄 一键重打全部问题（N 张）</button>
+        <button class="btn small ghost" id="btnCloseAudit">✕</button>
+      </div>
+    </div>
     <div id="auditBody" class="modal2Scroll"></div>
   </div>
 </div>
@@ -588,7 +615,7 @@ function renderGrid(){
     const card=document.createElement("div");
     card.className=`fileCard st-${f.status}`+(state.selected===f.path?" selected":"");
     card.dataset.path=f.path;
-    card.innerHTML=`<img loading="lazy" src="/api/image?path=${encodeURIComponent(f.path)}">
+    card.innerHTML=`<img loading="lazy" class="ar-${window._curAR||"auto"}" src="/api/image?path=${encodeURIComponent(f.path)}">
       <div class="badge"></div><div class="fname">${f.name}</div>
       <div class="errtag">${f.error||"错误"}</div>`;
     card.addEventListener("click",()=>selectFile(f.path));
@@ -788,6 +815,14 @@ $("#btnAudit").addEventListener("click",async()=>{
     return;
   }
   body.innerHTML="";
+  // 收集全部问题文件路径（供一键重打）
+  const allBadPaths=[...new Set(d.issues.flatMap(g=>g.files.map(f=>f.path)))];
+  window._auditBadPaths=allBadPaths;   // 供「一键重打全部」用
+  const retagBtnAll=$("#btnAuditRetagAll");
+  if(allBadPaths.length){
+    retagBtnAll.style.display="";
+    retagBtnAll.textContent=`🔄 一键重打全部问题（${allBadPaths.length} 张）`;
+  } else retagBtnAll.style.display="none";
   // 长度分布图
   if(d.length_dist&&d.length_dist.hist&&Object.keys(d.length_dist.hist).length){
     const wrap=document.createElement("div");
@@ -812,9 +847,19 @@ $("#btnAudit").addEventListener("click",async()=>{
     grp.className="auditGroup";
     const head=document.createElement("div");
     head.className="agHead";
-    head.innerHTML=`<span>${g.label}</span><span><span class="cnt">${g.files.length}</span> <span class="arrow">▶</span></span>`;
-    head.addEventListener("click",()=>grp.classList.toggle("open"));
+    head.innerHTML=`<span>${g.label}</span><span style="display:flex;gap:8px;align-items:center"><button class="btn small danger">重打这组</button><span><span class="cnt">${g.files.length}</span> <span class="arrow">▶</span></span></span>`;
+    head.addEventListener("click",e=>{
+      if(e.target.tagName==="BUTTON") return;
+      grp.classList.toggle("open");
+    });
     grp.appendChild(head);
+    // 该组重打按钮
+    const grpBtn=head.querySelector("button");
+    const groupPaths=g.files.map(f=>f.path);
+    grpBtn.addEventListener("click",e=>{
+      e.stopPropagation();
+      runAuditRetag(groupPaths, grpBtn, g.label);
+    });
     const files=document.createElement("div");
     files.className="auditFiles";
     g.files.forEach(f=>{
@@ -831,6 +876,32 @@ $("#btnAudit").addEventListener("click",async()=>{
 });
 $("#btnCloseAudit").addEventListener("click",()=>$("#auditOverlay").classList.remove("show"));
 $("#auditOverlay").addEventListener("click",e=>{ if(e.target.id==="auditOverlay") e.target.classList.remove("show"); });
+
+/* 质检一键重打 */
+async function runAuditRetag(paths, btn, label){
+  if(!$("#providerSel").value||!$("#modelSel").value){ toast("先在左侧选 Provider 和模型"); return; }
+  const doRetag=async()=>{
+    btn.disabled=true; const orig=btn.textContent; btn.textContent="⏳ 重打中…";
+    try{
+      const p=collectParams();
+      const r=await fetch("/api/retag_many",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({paths, lora_type:p.lora_type, provider_id:p.provider_id, model:p.model,
+          person_name:p.person_name, generic_subject:p.generic_subject, trigger_word:p.trigger_word,
+          trigger_position:p.trigger_position, style_hint:p.style_hint, extra_instructions:p.extra_instructions,
+          shot_tags:$("#optShotTags").checked, concurrency:+$("#optConcurrency").value})});
+      const d=await r.json();
+      if(d.error){ toast(d.error); return; }
+      toast(`已提交重打 ${paths.length} 张，进度看主界面日志`);
+      log("sys",`质检重打（${label||"全部"}）：${paths.length} 张已入批`);
+      $("#auditOverlay").classList.remove("show");
+    }finally{ btn.disabled=false; btn.textContent=orig; }
+  };
+  if(paths.length>10 && !confirm(`将重打 ${paths.length} 张（${label||"全部问题"}），覆盖现有 caption（自动备份 .bak）。继续？`)) return;
+  await doRetag();
+}
+$("#btnAuditRetagAll").addEventListener("click",function(){
+  runAuditRetag(window._auditBadPaths||[], this, "全部问题");
+});
 
 /* ===================== 批量替换 ===================== */
 $("#btnReplace").addEventListener("click",()=>{
@@ -1049,6 +1120,49 @@ async function restoreConfig(){
 }
 $("#optConcurrency").addEventListener("input",()=>$("#concVal").textContent=$("#optConcurrency").value);
 
+/* ===================== 日志折叠 + 拖拽调高 ===================== */
+$("#logPanel .loghead").addEventListener("click",e=>{
+  if(e.target.id==="btnCopyLog") return;
+  $("#logPanel").classList.toggle("collapsed");
+});
+$("#logPanel .loghead").title="点击折叠/展开日志";
+(function(){
+  const drag=$("#logDrag"), panel=$("#logPanel"), center=$("#centerPanel");
+  let startY=0, startH=0;
+  drag.addEventListener("mousedown",e=>{
+    e.preventDefault();
+    startY=e.clientY; startH=panel.getBoundingClientRect().height;
+    document.body.style.cursor="ns-resize";
+    document.body.style.userSelect="none";
+    const move=ev=>{
+      const centerRect=center.getBoundingClientRect();
+      const delta=ev.clientY-startY;
+      const maxH=centerRect.height-160;   // 网格区至少留 160px
+      const h=Math.max(34,Math.min(maxH,startH-delta));
+      panel.style.height=h+"px";
+      if(h<=34) panel.classList.add("collapsed"); else panel.classList.remove("collapsed");
+    };
+    const up=()=>{
+      document.removeEventListener("mousemove",move);
+      document.removeEventListener("mouseup",up);
+      document.body.style.cursor=""; document.body.style.userSelect="";
+    };
+    document.addEventListener("mousemove",move);
+    document.addEventListener("mouseup",up);
+  });
+})();
+
+/* ===================== 预览比例切换 ===================== */
+$$(".arBtn").forEach(b=>b.addEventListener("click",()=>{
+  $$(".arBtn").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");
+  const ar=b.dataset.ar;
+  $$("#fileGrid .fileCard img").forEach(img=>{
+    img.className="ar-"+ar;
+  });
+  window._curAR=ar;
+}));
+
 /* ===================== 键盘导航 ===================== */
 document.addEventListener("keydown",e=>{
   // 输入框/文本域/选择器里不拦截
@@ -1067,14 +1181,6 @@ document.addEventListener("keydown",e=>{
     $$(".show").forEach(el=>el.classList.remove("show"));
   }
 });
-
-/* ===================== 日志折叠 ===================== */
-$("#logPanel .loghead").addEventListener("click",e=>{
-  if(e.target.id==="btnCopyLog") return;
-  $("#logPanel").classList.toggle("collapsed");
-});
-$("#logPanel .loghead").style.cursor="pointer";
-$("#logPanel .loghead").title="点击折叠/展开日志";
 
 /* ===================== 启动 ===================== */
 (async function init(){

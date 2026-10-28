@@ -293,6 +293,34 @@ def _clean_reply(text: str) -> str:
     return text.strip()
 
 
+def _extract_reply_text(data: dict, kind: str) -> str:
+    """从 chat 响应里取正文文本。content 为 None/空时走 reasoning_content 尾段兜底（思考型模型）。
+    绝不把字面 None 写进结果：返回空串表示无效。"""
+    if kind == "ollama":
+        msg = (data.get("message") or {}).get("content") or ""
+        return str(msg)
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    msg = message.get("content")
+    if isinstance(msg, list):
+        # 分段 content（多模态数组形态）
+        parts = [seg.get("text", "") for seg in msg
+                 if isinstance(seg, dict) and seg.get("type") == "text"]
+        return " ".join(p for p in parts if p)
+    if msg is None or not str(msg).strip():
+        # content 为 null：思考型模型可能把结论留在 reasoning_content 尾段
+        rc = message.get("reasoning_content") or ""
+        if rc and str(rc).strip():
+            return str(rc).strip().splitlines()[-1]
+        return ""
+    return str(msg)
+
+
+_JUNK_REPLIES = {"none", "null", "n/a", "nan", "''", '""', "(none)"}
+
+
 def caption_image(
     provider_id: str,
     model: str,
@@ -363,23 +391,11 @@ def caption_image(
         raise ProviderError(f"HTTP {r.status_code}: {r.text[:300]}")
 
     data = r.json()
-    if ch.kind == "ollama":
-        msg = (data.get("message") or {}).get("content", "")
-    else:
-        try:
-            msg = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise ProviderError(f"响应格式异常: {json.dumps(data, ensure_ascii=False)[:300]}") from e
-        # 兼容某些渠道把内容放在 reasoning_content 或 list content
-        if not msg and isinstance(data["choices"][0]["message"].get("content"), list):
-            parts = []
-            for seg in data["choices"][0]["message"]["content"]:
-                if isinstance(seg, dict) and seg.get("type") == "text":
-                    parts.append(seg.get("text", ""))
-            msg = " ".join(parts)
-    text = _clean_reply(str(msg))
-    if not text:
-        raise ProviderError("模型返回空内容（可能该模型不支持看图，换用带「看图」标注的模型）")
+    text = _clean_reply(_extract_reply_text(data, ch.kind))
+    if not text or text.lower().strip(" .!\"'") in _JUNK_REPLIES:
+        raise ProviderError(
+            "模型返回空/None 内容（该模型可能不支持看图或走了纯思考通道，"
+            "换用带「看图」标注的模型，或点🔄刷新后重选）")
     return text
 
 
@@ -422,28 +438,7 @@ def translate_text(provider_id: str, model: str, text: str, timeout: float = 90.
     if r.status_code != 200:
         raise ProviderError(f"HTTP {r.status_code}: {r.text[:200]}")
     data = r.json()
-    if ch.kind == "ollama":
-        msg = (data.get("message") or {}).get("content", "")
-    else:
-        try:
-            message = data["choices"][0]["message"]
-            msg = message.get("content") or ""
-            # 思考型模型：正式内容在 content 为 null 时可能走 reasoning_content（流式截断场景），
-            # 但优先级最低；正常完整响应里 content 才是答案。
-            if not msg:
-                rc = message.get("reasoning_content") or ""
-                if rc:
-                    # reasoning 里通常以思考过程为主，从最后一段提取翻译结果兜底
-                    msg = rc.strip().splitlines()[-1] if rc.strip() else ""
-        except (KeyError, IndexError, TypeError):
-            msg = ""
-        if not msg and isinstance(data["choices"][0]["message"].get("content"), list):
-            parts = []
-            for seg in data["choices"][0]["message"]["content"]:
-                if isinstance(seg, dict) and seg.get("type") == "text":
-                    parts.append(seg.get("text", ""))
-            msg = " ".join(parts)
-    out = _clean_reply(str(msg))
-    if not out or out == "None":
-        raise ProviderError("翻译返回为空（该模型可能走了思考通道，换个非思考模型试试）")
+    out = _clean_reply(_extract_reply_text(data, ch.kind))
+    if not out or out.lower().strip(" .!\"'") in _JUNK_REPLIES:
+        raise ProviderError("翻译返回为空/None（该模型可能走了思考通道，换个非思考模型试试）")
     return out

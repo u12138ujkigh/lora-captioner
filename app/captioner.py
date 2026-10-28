@@ -100,13 +100,9 @@ def build_system_prompt(
 
     if lora_type == "person":
         tpl_file = TEMPLATE_DIR / "person.md"
-        if person_name:
-            body = _load_template_section(tpl_file, "系统提示词（人物名指定时）")
-            body = body.replace("{PERSON_NAME}", person_name)
-        else:
-            body = _load_template_section(tpl_file, "系统提示词（不指定人物名，用触发词模式）")
-            subject = generic_subject or "a woman"
-            body = body.replace("{GENERIC_SUBJECT}", subject)
+        body = _load_template_section(tpl_file, "系统提示词")
+        subject = (generic_subject or "a woman").strip()
+        body = body.replace("{GENERIC_SUBJECT}", subject)
     elif lora_type == "clothing":
         tpl_file = TEMPLATE_DIR / "clothing.md"
         body = _load_template_section(tpl_file, "系统提示词")
@@ -199,6 +195,9 @@ def assemble_caption(
     """模型原始输出 → 最终 caption。返回 (caption, 后处理元信息)。"""
     meta: dict[str, Any] = {"style_words_removed": []}
     text = raw.strip()
+    # None/垃圾输出硬拦截：宁可报错也不把 "None" 写进训练集
+    if not text or text.lower().strip(" .!\"'") in ("none", "null", "n/a", "nan", "(none)"):
+        raise ValueError(f"模型输出无效（{raw[:50]!r}），本张跳过不落盘")
     if lora_type == "style":
         text, n = strip_style_words(text)
         meta["style_words_removed"] = n

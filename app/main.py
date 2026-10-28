@@ -104,6 +104,21 @@ class RetagRequest(BaseModel):
     shot_tags: bool = True
 
 
+class RetagManyRequest(BaseModel):
+    paths: list[str]
+    lora_type: str
+    provider_id: str
+    model: str
+    person_name: str = ""
+    generic_subject: str = ""
+    trigger_word: str = ""
+    trigger_position: str = "prefix"
+    style_hint: str = ""
+    extra_instructions: str = ""
+    shot_tags: bool = True
+    concurrency: int = 3
+
+
 class TranslateRequest(BaseModel):
     provider_id: str
     model: str
@@ -546,6 +561,67 @@ def api_retag(req: RetagRequest):
         return {"ok": True, "caption": text, "backup": did_backup, "meta": meta}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/retag_many")
+def api_retag_many(req: RetagManyRequest):
+    """批量重打（后台并发执行，SSE 推进度）。paths 来自质检面板的问题文件。"""
+    with _batch_lock:
+        if _batch.running:
+            return JSONResponse({"error": "已有批次在跑，先停止或清屏"}, status_code=409)
+        if not req.paths:
+            return JSONResponse({"error": "没有要重打的文件"}, status_code=400)
+        _batch.running = True
+        _batch.cancel_requested = False
+        _batch.started_at = time.time()
+        _batch.finished_at = 0.0
+        _batch.lora_type = req.lora_type
+        _batch.provider_id = req.provider_id
+        _batch.model = req.model
+        _batch.trigger_word = req.trigger_word
+        # 以当前网格为底（网格没有的文件也追加进任务表）
+        known = {t.path for t in _batch.tasks}
+        _batch.tasks = [t for t in _batch.tasks if t.path in set(req.paths)]
+        for p in req.paths:
+            if p not in known:
+                _batch.tasks.append(cap.FileTask(path=p, name=Path(p).name, status="pending"))
+
+    params = dict(req)
+    threading.Thread(target=_run_batch, args=(params,), daemon=True).start()
+    return {"ok": True, "total": len(req.paths)}
+
+
+@app.post("/api/retag_many_sync")
+def api_retag_many_sync(req: RetagManyRequest):
+    """批量重打（同步版，前端逐张可反馈）。用于质检面板小组重打。"""
+    results = []
+    system_prompt = cap.build_system_prompt(
+        lora_type=req.lora_type,
+        person_name=req.person_name,
+        generic_subject=req.generic_subject,
+        trigger_word=req.trigger_word,
+        style_hint=req.style_hint,
+        extra_instructions=req.extra_instructions,
+    )
+    for p in req.paths:
+        try:
+            raw = prov.caption_image(
+                provider_id=req.provider_id, model=req.model,
+                image_path=Path(p), system_prompt=system_prompt,
+            )
+            text, meta = cap.assemble_caption(raw, req.lora_type, req.trigger_word, req.trigger_position)
+            if req.shot_tags:
+                text = cap.ensure_shot_tag(text, cap.shot_tag_from_name(Path(p).name))
+            cp = Path(p).with_suffix(".txt")
+            cap.backup_and_write(cp, text)
+            with _batch_lock:
+                for t in _batch.tasks:
+                    if t.path == p:
+                        t.status = "done"; t.caption = text; break
+            results.append({"path": p, "ok": True, "caption": text})
+        except Exception as e:
+            results.append({"path": p, "ok": False, "error": str(e)})
+    return {"ok": True, "results": results}
 
 
 @app.post("/api/translate")
