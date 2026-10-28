@@ -26,6 +26,8 @@ from pydantic import BaseModel
 from . import captioner as cap
 from . import upscaler as upscaler
 from . import providers as prov
+from . import executor as ex
+from . import projects as proj_mod
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR.parent / "static"
@@ -93,6 +95,14 @@ _queue_restore()
 
 def emit(event: dict) -> None:
     _event_queue.put(event)
+
+
+# --------------------------------------------------------------------------- #
+# 新架构：全局单队列执行器 + 项目库
+# --------------------------------------------------------------------------- #
+_projects = proj_mod.ProjectStore(APP_DIR.parent / "projects.json")
+_executor = ex.Executor(emit)
+_QUEUE_FILE = APP_DIR.parent / "queue_state.json"
 
 
 def load_last_config() -> dict:
@@ -241,6 +251,319 @@ class ReplaceRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 # REST 接口
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# 任务处理器：执行器队列里的三种任务
+# 全部跑在同一线程里，天然串行，不会互抢 ComfyUI 与显存
+# --------------------------------------------------------------------------- #
+def _proj_cfg(pid: str) -> dict:
+    """取项目配置，缺失时用默认值兜底。"""
+    p = _projects.get(pid)
+    cfg = dict(proj_mod.DEFAULT_CONFIG)
+    if p:
+        cfg.update(p.get("config") or {})
+    return cfg
+
+
+def _handle_upscale(job: ex.Job) -> None:
+    """放大任务：把项目的源目录放大到 out_dir。"""
+    pid = job.project_id
+    p = _projects.get(pid)
+    if not p:
+        raise RuntimeError(f"项目不存在：{pid}")
+    cfg = _proj_cfg(pid)
+
+    src_root = Path(p["directory"])
+    out_root = Path(p.get("out_dir") or (src_root.parent / (src_root.name + "_放大")))
+    if not src_root.is_dir():
+        raise RuntimeError(f"源目录不存在：{src_root}")
+
+    ok, msg = upscaler.available_for_webui()
+    if not ok:
+        raise RuntimeError(f"放大不可用：{msg}")
+
+    items = cap.scan_images(str(src_root), cfg.get("recursive", False))
+    out_resolved = str(out_root.resolve()).lower()
+    items = [it for it in items
+             if not str(Path(it["path"]).resolve()).lower().startswith(out_resolved)]
+
+    todo = []
+    for it in items:
+        target = out_root / Path(it["path"]).name
+        if cfg.get("skip_existing", True) and target.is_file():
+            continue
+        todo.append(it)
+
+    total = len(todo)
+    _executor.set_progress(job, stage="upscale", done=0, total=total, label=p["name"])
+    if not total:
+        job.result = {"skipped_all": True, "total": 0}
+        return
+
+    out_root.mkdir(parents=True, exist_ok=True)
+    done = 0
+    errors = []
+    for it in todo:
+        if job.cancel_requested:
+            break
+        try:
+            dst = out_root / Path(it["path"]).name
+            res = upscaler.run_one(
+                str(it["path"]), str(dst),
+                float(cfg.get("multiplier", 3.0)),
+                bool(cfg.get("sharpen", False)))
+            if res.get("ok"):
+                done += 1
+            else:
+                errors.append({"name": Path(it["path"]).name,
+                               "error": res.get("error", "")})
+        except Exception as e:
+            errors.append({"name": Path(it["path"]).name, "error": str(e)})
+        _executor.set_progress(job, stage="upscale", done=done + len(errors),
+                               total=total, ok=done, errors=len(errors))
+        emit({"type": "task_stage", "path": it["path"], "name": Path(it["path"]).name,
+              "stage": "upscale"})
+
+    try:
+        upscaler.free_comfy_memory()
+    except Exception:
+        pass
+
+    job.result = {"total": total, "done": done,
+                  "errors": errors[:50], "error_count": len(errors),
+                  "out_dir": str(out_root)}
+
+
+def _handle_caption(job: ex.Job) -> None:
+    """打标任务：对项目的源目录（或放大目录）打标。"""
+    pid = job.project_id
+    p = _projects.get(pid)
+    if not p:
+        raise RuntimeError(f"项目不存在：{pid}")
+    cfg = _proj_cfg(pid)
+
+    use_out = bool(job.params.get("use_out"))
+    src_dir = Path(job.params.get("directory") or p["directory"])
+    if use_out:
+        src_dir = Path(p.get("out_dir") or src_dir)
+
+    if not src_dir.is_dir():
+        raise RuntimeError(f"目录不存在：{src_dir}")
+    if not cfg.get("provider_id") or not cfg.get("model"):
+        raise RuntimeError("项目没有配置 Provider / 模型")
+
+    items = cap.scan_images(str(src_dir), cfg.get("recursive", False))
+    system_prompt = cap.build_system_prompt(
+        lora_type=cfg.get("lora_type", "person"),
+        person_name=cfg.get("person_name", ""),
+        generic_subject=cfg.get("generic_subject", ""),
+        trigger_word=cfg.get("trigger_word", ""),
+        style_hint=cfg.get("style_hint", ""),
+        extra_instructions=cfg.get("extra_instructions", ""),
+    )
+
+    pending = []
+    for it in items:
+        cp = Path(it["path"]).with_suffix(".txt")
+        if cfg.get("skip_existing", True) and cp.is_file():
+            continue
+        pending.append(it)
+
+    total = len(pending)
+    _executor.set_progress(job, stage="caption", done=0, total=total, label=p["name"])
+    if not total:
+        job.result = {"skipped_all": True, "total": 0}
+        return
+
+    conc = max(1, min(int(cfg.get("concurrency", 3)), 8))
+    lock = threading.Lock()
+    cur = {"i": 0}
+    done = {"n": 0}
+    errors = []
+
+    def worker():
+        while True:
+            if job.cancel_requested:
+                return
+            with lock:
+                if cur["i"] >= len(pending):
+                    return
+                it = pending[cur["i"]]
+                cur["i"] += 1
+            try:
+                raw = prov.caption_image(
+                    provider_id=cfg["provider_id"], model=cfg["model"],
+                    image_path=Path(it["path"]), system_prompt=system_prompt,
+                    effort=cfg.get("effort", ""),
+                )
+                text, meta = cap.assemble_caption(
+                    raw, cfg.get("lora_type", "person"),
+                    cfg.get("trigger_word", ""),
+                    cfg.get("trigger_position", "prefix"))
+                if cfg.get("shot_tags", True):
+                    text = cap.ensure_shot_tag(
+                        text, cap.shot_tag_from_name(it["name"]))
+                cap.backup_and_write(Path(it["path"]).with_suffix(".txt"), text)
+                with lock:
+                    done["n"] += 1
+                    n, e = done["n"], len(errors)
+                _executor.set_progress(job, stage="caption", done=n + e,
+                                       total=total, ok=n, errors=e)
+                emit({"type": "task_done", "path": it["path"], "name": it["name"],
+                      "caption": text, "duration_ms": 0})
+            except Exception as e:
+                with lock:
+                    errors.append({"name": it["name"], "error": str(e)})
+                    n, e2 = done["n"], len(errors)
+                _executor.set_progress(job, stage="caption", done=n + e2,
+                                       total=total, ok=n, errors=e2)
+                emit({"type": "task_error", "path": it["path"],
+                      "name": it["name"], "error": str(e), "duration_ms": 0})
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(conc)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    job.result = {"total": total, "done": done["n"],
+                  "errors": errors[:50], "error_count": len(errors),
+                  "directory": str(src_dir)}
+
+
+def _handle_pipeline(job: ex.Job) -> None:
+    """全流程任务：放大 → 打标，两步在同一任务内串行。"""
+    pid = job.project_id
+    p = _projects.get(pid)
+    if not p:
+        raise RuntimeError(f"项目不存在：{pid}")
+
+    # 第一步：放大
+    _executor.set_progress(job, stage="upscale", done=0, total=0, label=p["name"])
+    _handle_upscale(job)
+    up_result = dict(job.result or {})
+    if job.cancel_requested:
+        return
+
+    total_up = up_result.get("total", 0)
+    done_up = up_result.get("done", 0)
+    if total_up and done_up == 0 and up_result.get("error_count"):
+        # 放大全失败，没有可打标的图
+        job.result = {"stage": "upscale", "failed": True,
+                      "up": up_result, "cap": {"skipped": "放大全部失败"}}
+        return
+
+    # 第二步：对放大目录打标
+    job.params["use_out"] = True
+    _executor.set_progress(job, stage="caption", done=0, total=0, label=p["name"])
+    _handle_caption(job)
+    cap_result = dict(job.result or {})
+
+    job.result = {"up": up_result, "cap": cap_result,
+                  "out_dir": up_result.get("out_dir", "")}
+
+
+_executor.register("upscale", _handle_upscale)
+_executor.register("caption", _handle_caption)
+_executor.register("pipeline", _handle_pipeline)
+
+
+# --------------------------------------------------------------------------- #
+# 项目接口
+# --------------------------------------------------------------------------- #
+@app.get("/api/projects")
+def api_projects():
+    return {"projects": _projects.all(), "active_id": (_projects.active() or {}).get("id", "")}
+
+
+@app.post("/api/projects")
+def api_project_create(req: dict):
+    name = str(req.get("name") or "").strip()
+    directory = str(req.get("directory") or "").strip()
+    if not directory:
+        return JSONResponse({"error": "需要目录"}, status_code=400)
+    if not Path(directory).is_dir():
+        return JSONResponse({"error": f"目录不存在：{directory}"}, status_code=400)
+    p = _projects.create(name, directory, req.get("config"))
+    return {"ok": True, "project": p}
+
+
+@app.patch("/api/projects/{pid}")
+def api_project_update(pid: str, req: dict):
+    p = _projects.update(pid, **req)
+    if not p:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    return {"ok": True, "project": p}
+
+
+@app.delete("/api/projects/{pid}")
+def api_project_delete(pid: str):
+    if not _projects.delete(pid):
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/active")
+def api_project_active(pid: str):
+    if not _projects.set_active(pid):
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/run")
+def api_project_run(pid: str, req: dict):
+    """在项目上跑一个动作：upscale / caption / pipeline。"""
+    p = _projects.get(pid)
+    if not p:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    if not Path(p["directory"]).is_dir():
+        return JSONResponse({"error": f"目录不存在：{p['directory']}"}, status_code=400)
+
+    action = str(req.get("action") or "").strip()
+    if action not in ("upscale", "caption", "pipeline"):
+        return JSONResponse({"error": f"未知动作：{action}"}, status_code=400)
+
+    cfg = _proj_cfg(pid)
+    if action in ("caption", "pipeline"):
+        if not cfg.get("provider_id") or not cfg.get("model"):
+            return JSONResponse({"error": "项目未配置 Provider / 模型"}, status_code=400)
+    if action in ("upscale", "pipeline"):
+        ok, msg = upscaler.available_for_webui()
+        if not ok:
+            return JSONResponse({"error": f"放大不可用：{msg}"}, status_code=400)
+
+    labels = {"upscale": "放大", "caption": "打标", "pipeline": "全流程"}
+    job = _executor.submit(action, f"{p['name']} · {labels[action]}",
+                           dict(req.get("params") or {}), project_id=pid)
+    ex.save_queue(_executor, _QUEUE_FILE)
+    return {"ok": True, "job": job.to_dict()}
+
+
+# --------------------------------------------------------------------------- #
+# 队列接口
+# --------------------------------------------------------------------------- #
+@app.get("/api/executor")
+def api_executor_state():
+    return _executor.snapshot()
+
+
+@app.post("/api/executor/cancel/{job_id}")
+def api_executor_cancel(job_id: str):
+    ok = _executor.cancel(job_id)
+    return {"ok": ok}
+
+
+@app.post("/api/executor/cancel_all")
+def api_executor_cancel_all():
+    _executor.cancel_all()
+    return {"ok": True}
+
+
+@app.post("/api/executor/clear")
+def api_executor_clear():
+    _executor.clear_finished()
+    return {"ok": True}
+
+
 @app.get("/api/providers")
 def api_providers(refresh: bool = False):
     channels = prov.all_channels(refresh=refresh)
@@ -1747,8 +2070,39 @@ def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
+def _bootstrap() -> None:
+    """启动时：迁移旧配置 → 恢复队列 → 启动执行器。"""
+    # 1) 旧配置迁移（只做一次，已有同目录项目则跳过）
+    try:
+        legacy = {}
+        legacy_file = APP_DIR.parent / "ui_config.json"
+        if legacy_file.is_file():
+            legacy = json.loads(legacy_file.read_text(encoding="utf-8"))
+        if not legacy:
+            legacy = {"caption": load_last_config()}
+        if legacy:
+            migrated = _projects.migrate_legacy(legacy)
+            if migrated:
+                print(f"[bootstrap] 已导入项目：{migrated['name']}")
+    except Exception as e:
+        print(f"[bootstrap] 迁移失败（忽略）：{e}")
+
+    # 2) 恢复未完成的队列
+    try:
+        n = ex.load_queue(_executor, _QUEUE_FILE)
+        if n:
+            print(f"[bootstrap] 恢复 {n} 个待执行任务")
+    except Exception as e:
+        print(f"[bootstrap] 队列恢复失败（忽略）：{e}")
+
+    # 3) 启动执行器
+    _executor.start()
+    print("[bootstrap] 执行器已启动（单队列串行）")
+
+
 def main() -> None:
     port = int(os.environ.get("CAPTIONER_PORT", "7860"))
+    _bootstrap()
     print(f"LoRA Captioner WebUI -> http://127.0.0.1:{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

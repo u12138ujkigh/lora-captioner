@@ -36,3 +36,8 @@ ui_config.json
 
 # local commit message scratch
 _commit_msg.txt
+
+# runtime state
+projects.json
+queue_state.json
+*_state.json
