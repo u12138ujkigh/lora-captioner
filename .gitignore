@@ -16,3 +16,7 @@ _test*/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+_shots/
+*.bak-*
+
