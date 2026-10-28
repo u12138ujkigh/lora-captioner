@@ -38,6 +38,15 @@ app = FastAPI(title="LoRA Captioner")
 # --------------------------------------------------------------------------- #
 _event_queue: "queue.Queue[dict]" = queue.Queue()
 _batch = cap.BatchState()
+
+# 放大是独立功能：自己的一份批次状态，与打标互不干扰
+_up_batch = {
+    "running": False, "cancel": False,
+    "directory": "", "mode": "newfile", "multiplier": 3.0, "sharpen": False,
+    "tasks": [],          # [{path,name,status,error,duration_ms,from,to}]
+    "started_at": 0.0, "finished_at": 0.0,
+}
+_up_lock = threading.Lock()
 _batch_lock = threading.Lock()
 _recent_dirs: list[str] = []
 
@@ -155,6 +164,16 @@ class RetagManyRequest(BaseModel):
     concurrency: int = 3
 
 
+class UpscaleRequest(BaseModel):
+    directory: str
+    recursive: bool = False
+    multiplier: float = 3.0
+    mode: str = "newfile"        # newfile=另存 _up | inplace=覆盖（备份 .orig）
+    sharpen: bool = False
+    limit: int = 0               # 0=全部；试跑传 2
+    skip_existing: bool = False  # 已放大过的跳过
+
+
 class TranslateRequest(BaseModel):
     provider_id: str = ""
     model: str = ""
@@ -207,6 +226,155 @@ class ScanRequest(BaseModel):
 def api_scan2(req: ScanRequest):
     items = cap.scan_images(req.directory, req.recursive)
     return {"items": items, "count": len(items)}
+
+
+def _up_stats() -> dict:
+    tasks = _up_batch["tasks"]
+    total = len(tasks)
+    done = sum(1 for t in tasks if t["status"] == "done")
+    errs = sum(1 for t in tasks if t["status"] == "error")
+    skip = sum(1 for t in tasks if t["status"] == "skipped")
+    elapsed = ((_up_batch["finished_at"] or time.time()) - _up_batch["started_at"]
+               if _up_batch["started_at"] else 0)
+    durs = [t["duration_ms"] for t in tasks if t.get("duration_ms")]
+    return {
+        "total": total, "done": done, "errors": errs, "skipped": skip,
+        "elapsed_s": round(elapsed, 1),
+        "avg_s": round(sum(durs) / len(durs) / 1000, 2) if durs else 0,
+        "success_rate": round(done / total * 100, 1) if total else 0,
+    }
+
+
+def _run_upscale(req: dict) -> None:
+    """后台线程：逐张放大（串行，GPU 一次只跑一张才快）。"""
+    tasks = _up_batch["tasks"]
+    mode = req["mode"]
+    mult = float(req["multiplier"])
+    sharpen = bool(req["sharpen"])
+
+    emit({"type": "up_batch_start", "total": len(tasks),
+          "pending": sum(1 for t in tasks if t["status"] == "pending")})
+
+    for t in tasks:
+        if _up_batch["cancel"]:
+            break
+        if t["status"] != "pending":
+            continue
+        t["status"] = "running"
+        emit({"type": "up_task_start", "path": t["path"], "name": t["name"]})
+        t0 = time.time()
+        try:
+            src = Path(t["path"])
+            from PIL import Image
+            with Image.open(src) as im:
+                before = list(im.size)
+
+            if mode == "inplace":
+                backup = src.with_suffix(src.suffix + ".orig")
+                if not backup.exists():
+                    shutil.copy2(src, backup)
+                dst = src
+            else:
+                dst = src.with_name(src.stem + "_up" + src.suffix)
+
+            res = upscaler.run_subprocess(str(src), str(dst), mult, sharpen)
+            if not res.get("ok"):
+                raise RuntimeError(res.get("error", "放大失败"))
+
+            t["status"] = "done"
+            t["from"] = before
+            t["to"] = [res.get("width"), res.get("height")]
+            t["out"] = str(dst)
+            t["duration_ms"] = int((time.time() - t0) * 1000)
+            emit({"type": "up_task_done", "path": t["path"], "name": t["name"],
+                  "from": t["from"], "to": t["to"], "out": str(dst),
+                  "duration_ms": t["duration_ms"]})
+        except Exception as e:
+            t["status"] = "error"
+            t["error"] = str(e)
+            t["duration_ms"] = int((time.time() - t0) * 1000)
+            emit({"type": "up_task_error", "path": t["path"], "name": t["name"],
+                  "error": str(e), "duration_ms": t["duration_ms"]})
+
+    _up_batch["finished_at"] = time.time()
+    with _up_lock:
+        _up_batch["running"] = False
+        _up_batch["cancel"] = False
+    emit({"type": "up_batch_done", "stats": _up_stats()})
+
+
+@app.post("/api/upscale/start")
+def api_upscale_start(req: UpscaleRequest):
+    with _up_lock:
+        if _up_batch["running"]:
+            return JSONResponse({"error": "放大已在跑，先停止"}, status_code=409)
+        directory = req.directory.strip()
+        if not Path(directory).is_dir():
+            return JSONResponse({"error": f"目录不存在: {directory}"}, status_code=400)
+
+        ok, msg = upscaler.available_for_webui()
+        if not ok:
+            return JSONResponse({"error": msg}, status_code=400)
+
+        items = cap.scan_images(directory, req.recursive)
+        if not items:
+            return JSONResponse({"error": "目录里没有图片"}, status_code=400)
+
+        # 跳过已放大（_up 已存在 或 .orig 已存在）
+        tasks = []
+        skipped = 0
+        for it in items:
+            p = Path(it["path"])
+            already = (p.stem.endswith("_up")) or Path(str(p) + ".orig").is_file()
+            if req.skip_existing and already:
+                skipped += 1
+                continue
+            tasks.append({"path": it["path"], "name": it["name"],
+                          "status": "pending", "error": "", "duration_ms": 0})
+            if req.limit and req.limit > 0 and len(tasks) >= req.limit:
+                break
+
+        if not tasks:
+            return JSONResponse({"error": "没有需要放大的图片（都已处理过）"}, status_code=400)
+
+        _up_batch.update({
+            "running": True, "cancel": False, "directory": directory,
+            "mode": req.mode, "multiplier": req.multiplier, "sharpen": req.sharpen,
+            "tasks": tasks, "started_at": time.time(), "finished_at": 0.0,
+        })
+
+    threading.Thread(target=_run_upscale, args=(dict(req.model_dump()),),
+                     daemon=True).start()
+    return {"ok": True, "total": len(tasks), "skipped": skipped}
+
+
+@app.post("/api/upscale/stop")
+def api_upscale_stop():
+    _up_batch["cancel"] = True
+    return {"ok": True}
+
+
+@app.post("/api/upscale/clear")
+def api_upscale_clear():
+    with _up_lock:
+        if _up_batch["running"]:
+            return JSONResponse({"error": "先停止放大"}, status_code=409)
+        _up_batch.update({"tasks": [], "directory": "", "started_at": 0.0,
+                          "finished_at": 0.0, "cancel": False})
+    return {"ok": True}
+
+
+@app.get("/api/upscale/batch")
+def api_upscale_batch():
+    with _up_lock:
+        return {
+            "running": _up_batch["running"],
+            "directory": _up_batch["directory"],
+            "mode": _up_batch["mode"],
+            "multiplier": _up_batch["multiplier"],
+            "stats": _up_stats(),
+            "tasks": list(_up_batch["tasks"]),
+        }
 
 
 @app.get("/api/upscale/status")
@@ -898,6 +1066,44 @@ def api_upscale_original(path: str):
         mime = "image/webp"
     return FileResponse(cand, media_type=mime,
                         headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/pick-folder")
+def api_pick_folder(initial: str = ""):
+    """弹出 Windows 原生「选择文件夹」对话框，返回绝对路径。
+
+    浏览器出于安全无法直接给出本地路径，所以由服务端（本机进程）弹窗。
+    用一个隐藏的 Tk 窗口承载对话框，不显示主界面。
+    """
+    def _pick():
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            path = filedialog.askdirectory(
+                title="选择数据集文件夹",
+                initialdir=initial if initial and Path(initial).is_dir() else None,
+                mustexist=True,
+            )
+        finally:
+            root.destroy()
+        return path
+
+    try:
+        import tkinter  # noqa: F401
+    except Exception as e:
+        return JSONResponse({"error": f"当前环境没有 tkinter，无法弹出选择框：{e}"},
+                            status_code=500)
+    try:
+        picked = _pick()
+    except Exception as e:
+        return JSONResponse({"error": f"打开文件夹选择器失败：{e}"}, status_code=500)
+
+    if not picked:
+        return {"ok": False, "cancelled": True, "path": ""}
+    return {"ok": True, "cancelled": False, "path": str(Path(picked))}
 
 
 @app.get("/api/browse")

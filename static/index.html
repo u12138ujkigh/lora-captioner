@@ -912,8 +912,6 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   #topbar{gap:6px;padding:0 8px}
   #topbar .logo .ver{display:none}
   #statText{display:none}
-  .flowStep span{display:none}
-  .flowStrip{padding:3px 6px;gap:3px}
   #fileGrid{--col-w:104px;padding:8px}
 }
 
@@ -924,33 +922,6 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .statusBar #progressWrap{flex:1;min-width:60px}
 
 /* ---------- 两步流程指示 ---------- */
-.flowStrip{
-  display:flex;align-items:center;gap:5px;flex-shrink:0;
-  padding:3px 9px;border-radius:999px;
-  background:var(--paper-2);border:1px solid var(--rule);
-  font-size:11px;
-}
-.flowStep{
-  display:inline-flex;align-items:center;gap:4px;
-  color:var(--text-mute);white-space:nowrap;
-  transition:color .2s var(--ease);
-}
-.flowStep i{
-  font-style:normal;font-size:9px;line-height:1;
-  width:13px;height:13px;border-radius:50%;
-  display:inline-flex;align-items:center;justify-content:center;
-  background:var(--rule);color:var(--ink);
-  transition:background-color .2s var(--ease);
-}
-.flowArrow{color:var(--rule);font-size:11px;line-height:1}
-/* 放大开启：第 1 步点亮 */
-.flowStrip.up-on .flowStep[data-step="up"]{color:var(--safe-bright)}
-.flowStrip.up-on .flowStep[data-step="up"] i{background:var(--safe);color:#04121f}
-/* 正在跑的那一步：脉冲 */
-.flowStrip .flowStep.active{color:var(--safe)}
-.flowStrip .flowStep.active i{background:var(--safe);color:#04121f;animation:flowPulse 1.1s ease-in-out infinite}
-.flowStrip .flowStep.done i{background:var(--done);color:#04121f}
-@keyframes flowPulse{50%{opacity:.35}}
 
 #upscaleFields{margin-top:2px}
 #upscaleStatus{font-size:10.5px;line-height:1.5;margin-top:5px}
@@ -1045,6 +1016,67 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 .cmpTag.left{left:6px}
 .cmpTag.right{right:6px;color:var(--safe-bright)}
 .cmpWrap:hover .cmpTag{opacity:1}
+
+/* ---------- 模式标签：放大 / 打标 ---------- */
+.modeTabs{
+  display:inline-flex;align-items:center;gap:0;flex-shrink:0;
+  background:var(--paper-2);border:1px solid var(--rule);
+  border-radius:var(--r);padding:2px;
+}
+.modeTab{
+  padding:4px 12px;border:none;border-radius:calc(var(--r) - 2px);
+  background:transparent;color:var(--text-mute);
+  font-family:inherit;font-size:12px;font-weight:600;
+  cursor:pointer;white-space:nowrap;
+  transition:background-color .16s var(--ease),color .16s var(--ease);
+  touch-action:manipulation;
+}
+.modeTab:hover{color:var(--text-dim)}
+.modeTab.active{
+  background:var(--safe);color:#04121f;
+  box-shadow:0 1px 4px rgba(0,0,0,.3);
+}
+.modeTab[data-mode="upscale"].active{background:var(--sys);color:#04121f}
+
+/* 放大模式的统计条 */
+.upStats{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:8px 10px;margin-bottom:8px;
+  background:var(--paper-2);border:1px solid var(--rule);border-radius:var(--r-sm);
+  font-size:11px;color:var(--text-dim);
+}
+.upStats b{color:var(--safe-bright);font-variant-numeric:tabular-nums}
+.upStats .sp{flex:1}
+
+/* 放大任务行 */
+.upRow{
+  display:flex;align-items:center;gap:8px;
+  padding:7px 9px;margin-bottom:5px;
+  background:var(--paper-2);border:1px solid var(--rule-soft);
+  border-radius:var(--r-sm);font-size:11.5px;
+}
+.upRow .un{
+  flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:"Cascadia Mono",Consolas,monospace;font-size:11px;color:var(--text);
+}
+.upRow .ud{color:var(--text-mute);font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.upRow .us{
+  width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--text-mute);
+}
+.upRow.st-running .us{background:var(--safe);animation:pulse 1.2s infinite}
+.upRow.st-done .us{background:var(--done)}
+.upRow.st-error .us{background:var(--fail)}
+.upRow.st-pending .us{background:var(--text-mute)}
+
+#upPanelCenter .upHead{
+  font-size:12.5px;font-weight:600;color:var(--text);
+  padding:0 2px 8px;display:flex;align-items:center;gap:8px;
+}
+#upPanelCenter .upHead span{color:var(--text-mute);font-weight:400;font-size:11.5px}
+#upPanelCenter{
+  flex:1;overflow-y:auto;overscroll-behavior:contain;
+  padding:12px;scrollbar-gutter:stable;
+}
 </style>
 </head>
 <body>
@@ -1057,10 +1089,13 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
   <button class="btn ghost small" id="btnToggleLeft" aria-label="收起配置面板" aria-expanded="true" title="收起或展开配置面板">◀</button>
 
   <div class="statusBar">
-    <div class="flowStrip" id="flowStrip">
-      <span class="flowStep" data-step="up"><i>1</i><span>放大</span></span>
-      <span class="flowArrow">›</span>
-      <span class="flowStep" data-step="cap"><i>2</i><span>打标</span></span>
+    <div class="modeTabs" role="tablist" aria-label="功能切换">
+      <button class="modeTab" id="tabUpscale" role="tab" aria-selected="false" data-mode="upscale">
+        素材放大
+      </button>
+      <button class="modeTab active" id="tabCaption" role="tab" aria-selected="true" data-mode="caption">
+        打标
+      </button>
     </div>
     <div id="progressWrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="批次进度">
       <div id="progressBar"></div>
@@ -1070,8 +1105,10 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
 
   <div class="topActions">
     <button class="btn primary" id="btnStart">开始打标</button>
+    <button class="btn primary" id="btnUpStart" hidden>开始放大</button>
     <button class="btn" id="btnQueueAdd" title="把当前配置与目录加入队列，可排多个目录">排队</button>
     <button class="btn danger" id="btnStop" disabled>停止</button>
+    <button class="btn danger" id="btnUpStop" hidden disabled>停止放大</button>
   </div>
   <span class="topDivider" aria-hidden="true"></span>
   <div class="topActions">
@@ -1116,6 +1153,37 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
         </div>
         <div id="dirBrowser"></div>
         <label class="switchRow"><span>含子目录</span><input type="checkbox" id="optRecursive"></label>
+      </div>
+    </section>
+
+    <!-- ============ 放大模式专属面板（与打标面板互斥显示） ============ -->
+    <section class="group open" data-group="up-settings" id="upPanel" hidden>
+      <button class="groupHead" aria-expanded="true">
+        <span class="tw" aria-hidden="true">▶</span>
+        <span class="label">放大设置</span>
+        <span class="badge" data-role="badge">3×</span>
+      </button>
+      <div class="groupBody">
+        <div class="field">
+          <label for="upscaleMultiplier">放大倍数</label>
+          <select id="upscaleMultiplier" class="miniSelect" style="width:100%">
+            <option value="2">2×</option>
+            <option value="3" selected>3×</option>
+            <option value="4">4×</option>
+          </select>
+          <div class="hint">先按倍数 lanczos 缩放，再由 SeedVR2 精修细节</div>
+        </div>
+        <div class="field">
+          <label for="upscaleMode">输出方式</label>
+          <select id="upscaleMode" style="width:100%">
+            <option value="newfile" selected>另存 名字_up（原图不动）</option>
+            <option value="inplace">覆盖原图（备份 .orig）</option>
+          </select>
+          <div class="hint" id="upscaleModeHint">生成 名字_up.jpg，原图保留</div>
+        </div>
+        <label class="switchRow"><span>放大后轻微锐化</span><input type="checkbox" id="optUpscaleSharpen"></label>
+        <label class="switchRow"><span>跳过已放大的图</span><input type="checkbox" id="optUpSkip" checked></label>
+        <div class="hint" id="upscaleStatus">检查环境中…</div>
       </div>
     </section>
 
@@ -1221,41 +1289,6 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
       </div>
     </section>
 
-    <section class="group" data-group="upscale">
-      <button class="groupHead" aria-expanded="false">
-        <span class="tw" aria-hidden="true">▶</span>
-        <span class="label">素材放大</span>
-        <span class="badge" data-role="badge">关闭</span>
-      </button>
-      <div class="groupBody">
-        <label class="switchRow">
-          <span>打标前先放大（SeedVR2）</span>
-          <input type="checkbox" id="optUpscale">
-        </label>
-        <div id="upscaleFields" hidden>
-          <div class="field">
-            <label for="upscaleMultiplier">放大倍数</label>
-            <select id="upscaleMultiplier" class="miniSelect" style="width:100%">
-              <option value="2">2×</option>
-              <option value="3" selected>3×</option>
-              <option value="4">4×</option>
-            </select>
-            <div class="hint">先按倍数缩放，再由 SeedVR2 精修细节</div>
-          </div>
-          <div class="field">
-            <label for="upscaleMode">输出方式</label>
-            <select id="upscaleMode" style="width:100%">
-              <option value="newfile" selected>另存 名字_up.jpg（原图不动）</option>
-              <option value="inplace">覆盖原图（备份为 .orig）</option>
-            </select>
-            <div class="hint" id="upscaleModeHint">打标读放大图，数据集保留原图</div>
-          </div>
-          <label class="switchRow"><span>放大后轻微锐化</span><input type="checkbox" id="optUpscaleSharpen"></label>
-          <div class="hint" id="upscaleStatus">检查环境中…</div>
-        </div>
-      </div>
-    </section>
-
     <section class="group open" data-group="engine">
       <button class="groupHead" aria-expanded="true">
         <span class="tw" aria-hidden="true">▶</span>
@@ -1329,6 +1362,11 @@ input[type=range]::-webkit-slider-thumb:hover{background:var(--safe-bright)}
         <button class="fbtn" data-f="skipped" aria-pressed="false">跳过<span class="n" data-n="skipped"></span></button>
       </div>
       <button class="btn small ghost" id="btnRescan">重新扫描</button>
+    </div>
+    <div id="upPanelCenter" hidden>
+      <div class="upHead">放大任务 <span id="upHeadCount"></span></div>
+      <div class="upStats" id="upStats" hidden></div>
+      <div id="upList"></div>
     </div>
     <div id="fileGrid" role="listbox" aria-label="图片文件列表"><div class="empty-hint"><strong>还没有扫描目录</strong><span>在左侧填入数据集路径，或按 <kbd>Ctrl</kbd> <kbd>O</kbd> 浏览</span></div></div>
     <div class="kbdHint">
@@ -1519,8 +1557,87 @@ function applyType(type){
 }
 $$("#typeCards .typeCard").forEach(c=>c.addEventListener("click",()=>applyType(c.dataset.type)));
 
-/* ===================== 素材放大 ===================== */
+/* ===================== 模式切换（放大 / 打标） ===================== */
+/* 两个功能各有自己的 UI、自己的批次、自己的按钮。
+   切换时整个左栏内容重建，中间网格共用。 */
+let _mode = "caption";
+
+const CAPTION_GROUPS = ["type","person","clothing","style","body","naming","trigger","engine","advanced"];
+const UPSCALE_GROUPS = ["up-settings"];
+
+function setMode(mode, silent){
+  _mode = mode;
+  document.body.dataset.mode = mode;
+
+  // 标签
+  $$(".modeTab").forEach(t=>{
+    const on=t.dataset.mode===mode;
+    t.classList.toggle("active",on);
+    t.setAttribute("aria-selected",on?"true":"false");
+  });
+
+  // 左栏分组显隐
+  CAPTION_GROUPS.forEach(g=>{
+    const el=document.querySelector(`section[data-group="${g}"]`);
+    if(el) el.hidden = (mode!=="caption");
+  });
+  UPSCALE_GROUPS.forEach(g=>{
+    const el=document.querySelector(`section[data-group="${g}"]`);
+    if(el) el.hidden = (mode!=="upscale");
+  });
+
+  // 顶栏按钮
+  const isUp = mode==="upscale";
+  $("#btnStart").hidden = isUp;
+  $("#btnStop").hidden = isUp;
+  $("#btnUpStart").hidden = !isUp;
+  $("#btnUpStop").hidden = !isUp;
+
+  // 打标辅助按钮在放大模式下也该隐藏
+  ["#btnQueueAdd","#btnAudit","#btnReplace"].forEach(sel=>{
+    const el=$(sel); if(el) el.hidden = isUp;
+  });
+
+  // 中间区：打标看图片网格（含筛选头/键盘提示/日志），放大看任务列表
+  const grid=$("#fileGrid"), upC=$("#upPanelCenter");
+  const gridHead=$("#gridHeader"), kbd=$(".kbdHint");
+  if(grid) grid.hidden = isUp;
+  if(upC) upC.hidden = !isUp;
+  if(gridHead) gridHead.hidden = isUp;
+  if(kbd) kbd.hidden = isUp;
+
+
+
+  // 清屏按钮语义随模式走
+  const clr=$("#btnClear");
+  if(clr) clr.textContent = isUp ? "清空" : "清屏";
+
+  if(!silent) log("sys", isUp ? "已切到素材放大" : "已切到打标");
+  syncModeUI();
+}
+
+function syncModeUI(){
+  const isUp=_mode==="upscale";
+  syncUpscaleUI();
+  if(isUp) loadUpBatch();
+}
+
+$$(".modeTab").forEach(t=>{
+  t.addEventListener("click",()=>{
+    if(_mode===t.dataset.mode) return;
+    setMode(t.dataset.mode);
+  });
+});
+// 键盘：Ctrl+1 / Ctrl+2 切换
+document.addEventListener("keydown",e=>{
+  if(!(e.ctrlKey||e.metaKey)) return;
+  if(e.key==="1"){ e.preventDefault(); setMode("caption"); }
+  if(e.key==="2"){ e.preventDefault(); setMode("upscale"); }
+});
+
+/* ===================== 素材放大（独立功能） ===================== */
 let _upAvailable = false;
+let _upPolling = null;
 
 async function loadUpscaleStatus(){
   const el=$("#upscaleStatus");
@@ -1531,10 +1648,7 @@ async function loadUpscaleStatus(){
     el.textContent = _upAvailable
       ? `可用 · ${d.unet} / ${d.vae}`
       : `不可用 · ${d.message}`;
-    if(!_upAvailable){
-      $("#optUpscale").checked=false;
-      syncUpscaleUI();
-    }
+    $("#btnUpStart").disabled = !_upAvailable;
   }catch(e){
     _upAvailable=false;
     el.className="bad";
@@ -1542,38 +1656,154 @@ async function loadUpscaleStatus(){
   }
 }
 
-function upscaleOn(){ return _upAvailable && $("#optUpscale").checked; }
-
 function syncUpscaleUI(){
-  const on=$("#optUpscale").checked;
-  $("#upscaleFields").hidden=!on;
-  const strip=$("#flowStrip");
-  if(strip) strip.classList.toggle("up-on",on);
-  const badge=document.querySelector('section[data-group="upscale"] [data-role="badge"]');
+  const badge=document.querySelector('section[data-group="up-settings"] [data-role="badge"]');
   if(badge){
-    badge.textContent = !_upAvailable ? "不可用"
-      : on ? `${$("#upscaleMultiplier").value}×` : "关闭";
-  }
-  // 分组标题在开启时自动展开，方便调参
-  const grp=document.querySelector('section[data-group="upscale"]');
-  if(on && grp && !grp.classList.contains("open")){
-    grp.classList.add("open");
-    grp.querySelector(".groupHead").setAttribute("aria-expanded","true");
+    badge.textContent = !_upAvailable ? "不可用" : `${$("#upscaleMultiplier").value}×`;
   }
 }
 
-$("#optUpscale").addEventListener("change",()=>{
-  if($("#optUpscale").checked && !_upAvailable){
-    toast("放大环境不可用，先检查模型与 Python 环境");
-    $("#optUpscale").checked=false;
-  }
-  syncUpscaleUI();
-});
 $("#upscaleMultiplier").addEventListener("change",syncUpscaleUI);
 $("#upscaleMode").addEventListener("change",()=>{
   $("#upscaleModeHint").textContent = $("#upscaleMode").value==="inplace"
-    ? "覆盖原图，原图备份为 .orig（占用空间，但数据集直接用放大图）"
-    : "打标读放大图，数据集保留原图";
+    ? "覆盖原图，原图备份为 .orig（数据集直接换成分辨率更高的）"
+    : "生成 名字_up.jpg，原图保留";
+});
+
+/* ---- 独立批次：启动 / 停止 / 清空 ---- */
+$("#btnUpStart").addEventListener("click",async()=>{
+  const dir=$("#dirInput").value.trim();
+  if(!dir){ toast("先选一个文件夹"); return; }
+  if(!_upAvailable){ toast("放大环境不可用"); return; }
+
+  const r=await fetch("/api/upscale/start",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      directory:dir,
+      recursive:$("#optRecursive").checked,
+      multiplier:parseFloat($("#upscaleMultiplier").value),
+      mode:$("#upscaleMode").value,
+      sharpen:$("#optUpscaleSharpen").checked,
+      skip_existing:$("#optUpSkip").checked,
+    })});
+  const d=await r.json();
+  if(d.error){ toast(d.error); log("err", d.error); return; }
+  log("info",`开始放大 ${d.total} 张${d.skipped?`（跳过 ${d.skipped} 张已处理）`:""}`);
+  upSetRunning(true);
+  startUpPolling();
+});
+
+$("#btnUpStop").addEventListener("click",async()=>{
+  await fetch("/api/upscale/stop",{method:"POST"});
+  log("warn","已请求停止放大，等当前这张跑完");
+});
+
+function upSetRunning(run){
+  $("#btnUpStart").disabled = run || !_upAvailable;
+  $("#btnUpStop").disabled = !run;
+}
+
+/* ---- 轮询放大批次（用轮询而非 SSE，逻辑更简单可靠）---- */
+function startUpPolling(){
+  stopUpPolling();
+  _upPolling=setInterval(loadUpBatch, 1200);
+}
+function stopUpPolling(){
+  if(_upPolling){ clearInterval(_upPolling); _upPolling=null; }
+}
+
+async function loadUpBatch(){
+  try{
+    const r=await fetch("/api/upscale/batch"); const d=await r.json();
+    renderUpBatch(d);
+    if(!d.running){
+      upSetRunning(false);
+      stopUpPolling();
+    }
+  }catch(e){ /* 轮询失败忽略，下次再试 */ }
+}
+
+function renderUpBatch(d){
+  const box=$("#upList");
+  if(!box) return;
+  const st=d.stats||{};
+  const running=d.running;
+
+  const cnt=$("#upHeadCount");
+  if(cnt) cnt.textContent = st.total ? `${st.done}/${st.total} 已完成` : "";
+
+  // 顶部统计
+  const head=$("#upStats");
+  if(head){
+    if(!st.total){ head.hidden=true; }
+    else{
+      head.hidden=false;
+      head.innerHTML=`总数 <b>${st.total}</b> · 完成 <b>${st.done}</b>`
+        + (st.errors?` · 失败 <b style="color:var(--fail)">${st.errors}</b>`:"")
+        + (st.skipped?` · 跳过 <b>${st.skipped}</b>`:"")
+        + (st.elapsed_s?` · ${st.elapsed_s}s`:"")
+        + (st.avg_s?` · 平均 ${st.avg_s}s/张`:"");
+    }
+  }
+
+  // 任务列表
+  if(!d.tasks||!d.tasks.length){
+    box.innerHTML=running
+      ? '<div class="empty-hint" style="padding:20px"><strong>准备中…</strong></div>'
+      : '<div class="empty-hint" style="padding:24px"><strong>还没有放大的图片</strong>'
+        + '<span>选好文件夹，点顶栏「开始放大」</span></div>';
+    return;
+  }
+
+  box.innerHTML=d.tasks.map(t=>{
+    const cls=t.status==="running"?"st-running"
+      :t.status==="done"?"st-done"
+      :t.status==="error"?"st-error":"st-pending";
+    const meta = t.status==="done"
+      ? `${t.from?t.from[0]+"×"+t.from[1]:""} → ${t.to?t.to[0]+"×"+t.to[1]:""} · ${(t.duration_ms/1000).toFixed(1)}s`
+      : t.status==="error" ? (t.error||"失败").slice(0,40)
+      : t.status==="running" ? "放大中…"
+      : "等待";
+    return `<div class="upRow ${cls}">
+      <span class="us"></span>
+      <span class="un" title="${t.path}">${t.name}</span>
+      <span class="ud">${meta}</span>
+    </div>`;
+  }).join("");
+
+  // 进度条
+  if(st.total){
+    const pct=Math.round((st.done+st.errors)/st.total*100);
+    setProgress(pct);
+    $("#statText").textContent = running
+      ? `放大 ${st.done+st.errors}/${st.total}`
+      : `放大完成 ${st.done}/${st.total}`;
+  }
+}
+
+/* ===================== 文件夹选择器 ===================== */
+/* 点「📂」调用服务端的 Windows 原生对话框——浏览器出于安全
+   无法拿到本地绝对路径，只能由本机进程弹窗。 */
+$("#btnBrowse").addEventListener("click",async()=>{
+  const btn=$("#btnBrowse");
+  const old=btn.textContent;
+  btn.disabled=true; btn.textContent="…";
+  try{
+    const cur=$("#dirInput").value.trim();
+    const r=await fetch("/api/pick-folder?initial="+encodeURIComponent(cur),
+                        {method:"GET"});
+    const d=await r.json();
+    if(d.error){ toast(d.error); log("err", d.error); return; }
+    if(d.cancelled){ return; }
+    $("#dirInput").value=d.path;
+    syncDirBadge();
+    await scanDir();
+    log("ok",`已选择文件夹：${d.path}`);
+  }catch(e){
+    toast("打开选择器失败："+e.message);
+  }finally{
+    btn.disabled=false; btn.textContent=old;
+  }
 });
 
 /* ===================== Provider ===================== */
@@ -2154,10 +2384,7 @@ $("#btnStart").addEventListener("click",async()=>{
       recursive:$("#optRecursive").checked, limit:trial?2:0,
       shot_tags:$("#optShotTags").checked,
       folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
-      upscale:upscaleOn(),
-      upscale_multiplier:parseFloat($("#upscaleMultiplier").value),
-      upscale_mode:$("#upscaleMode").value,
-      upscale_sharpen:$("#optUpscaleSharpen").checked,
+      upscale:false,
     })});
   const d=await r.json();
   if(d.error){ toast(d.error); log("err",d.error); return; }
@@ -2171,6 +2398,17 @@ $("#btnStop").addEventListener("click",async()=>{
   log("warn","已请求停止，等正在跑的图片结束");
 });
 $("#btnClear").addEventListener("click",async()=>{
+  if(_mode==="upscale"){
+    const r=await fetch("/api/upscale/clear",{method:"POST"});
+    const d=await r.json();
+    if(d.error){ toast(d.error); return; }
+    setProgress(0);
+    $("#statText").textContent="待命";
+    $("#upStats").hidden=true;
+    $("#upList").innerHTML="";
+    toast("放大记录已清空");
+    return;
+  }
   if(state.running){ toast("先停止当前批次再清屏"); return; }
   await fetch("/api/clear",{method:"POST"});
   state.files=[]; state.selected=null;
@@ -2380,10 +2618,7 @@ function collectStartParams(extra={}){
     recursive:$("#optRecursive").checked, limit:$("#optTrial").checked?2:0,
     shot_tags:$("#optShotTags").checked,
     folder_name:currentFolderName(), auto_rename:$("#optAutoRename").checked,
-    upscale:upscaleOn(),
-    upscale_multiplier:parseFloat($("#upscaleMultiplier").value),
-    upscale_mode:$("#upscaleMode").value,
-    upscale_sharpen:$("#optUpscaleSharpen").checked,
+    upscale:false,
   },extra);
 }
 $("#btnQueueAdd").addEventListener("click",async()=>{
@@ -2900,6 +3135,8 @@ $("#triggerWord").addEventListener("input",syncTriggerBadge);
   }catch(e){}
   await restoreConfig();
   await loadProviders();
+  await loadUpscaleStatus();
+  setMode("caption", true);
   applyType(state.type);
   syncDirBadge(); syncEngineBadge(); syncTriggerBadge();
   await loadUpscaleStatus();
