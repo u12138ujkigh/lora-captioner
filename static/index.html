@@ -70,7 +70,13 @@ input[type=range]{accent-color:var(--acc);width:110px}
 #filterBtns{display:flex;gap:5px}
 .fbtn{padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;font-size:11.5px}
 .fbtn.active{border-color:var(--acc);color:var(--acc2);background:rgba(91,140,255,.1)}
-#fileGrid{flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px;align-content:start}
+#fileGrid{flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px;align-content:start;transition:grid-template-columns .25s ease}
+/* 比例模式联动列宽：竖图宽列、横图窄列 */
+#fileGrid.ar-3-4{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+#fileGrid.ar-9-16{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+#fileGrid.ar-1-1{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+#fileGrid.ar-4-3{grid-template-columns:repeat(auto-fill,minmax(115px,1fr))}
+#fileGrid.ar-16-9{grid-template-columns:repeat(auto-fill,minmax(100px,1fr))}
 .fileCard{border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--panel2);position:relative;transition:all .12s}
 .fileCard:hover{border-color:var(--acc);transform:translateY(-2px)}
 .fileCard.selected{border-color:var(--acc);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
@@ -172,6 +178,7 @@ textarea{font-family:inherit}
 /* 预览比例切换 */
 .arBtn{padding:2px 8px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;font-size:10.5px}
 .arBtn.active{border-color:var(--acc);color:var(--acc2);background:rgba(91,140,255,.12)}
+.fileCard img{width:100%;height:110px;object-fit:cover;display:block;background:#0a0c10;transition:aspect-ratio .2s ease}
 .fileCard img.ar-1-1{aspect-ratio:1/1;height:auto}
 .fileCard img.ar-4-3{aspect-ratio:4/3;height:auto}
 .fileCard img.ar-3-4{aspect-ratio:3/4;height:auto}
@@ -1230,10 +1237,17 @@ $$(".arBtn").forEach(b=>b.addEventListener("click",()=>{
   $$(".arBtn").forEach(x=>x.classList.remove("active"));
   b.classList.add("active");
   const ar=b.dataset.ar;
+  // 网格列宽联动（CSS 已按 .ar-x 定义列宽）
+  const grid=$("#fileGrid");
+  grid.classList.remove("ar-1-1","ar-4-3","ar-3-4","ar-16-9","ar-9-16","ar-auto");
+  if(ar!=="auto") grid.classList.add("ar-"+ar);
+  // 卡片图比例
   $$("#fileGrid .fileCard img").forEach(img=>{
     img.className="ar-"+ar;
   });
   window._curAR=ar;
+  // 持久化选择
+  try{ localStorage.setItem("captioner_ar",ar); }catch(e){}
 }));
 
 /* ===================== 文件夹命名 ===================== */
@@ -1295,6 +1309,14 @@ document.addEventListener("keydown",e=>{
 /* ===================== 启动 ===================== */
 (async function init(){
   log("sys","LoRA Captioner 就绪");
+  // 恢复上次的比例选择
+  try{
+    const savedAR=localStorage.getItem("captioner_ar");
+    if(savedAR){
+      const btn=document.querySelector(`.arBtn[data-ar="${savedAR}"]`);
+      if(btn) btn.click();
+    }
+  }catch(e){}
   await restoreConfig();
   await loadProviders();
   if($("#dirInput").value) await scanDir();
