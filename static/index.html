@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoRA Captioner — 训练集打标工作台</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#161a22; --panel2:#1c212c; --line:#2a3140;
+  --txt:#dde3ec; --dim:#8b94a7; --acc:#5b8cff; --acc2:#7aa5ff;
+  --ok:#3fb96f; --err:#e0566a; --warn:#e0a53f; --skip:#6b7385;
+  --radius:10px; font-size:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ---------- 顶栏 ---------- */
+#topbar{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0}
+#topbar .logo{font-weight:700;font-size:16px;color:var(--acc2);white-space:nowrap}
+#topbar .stat{color:var(--dim);font-size:12.5px;white-space:nowrap}
+#progressWrap{flex:1;height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;min-width:120px}
+#progressBar{height:100%;width:0%;background:linear-gradient(90deg,var(--acc),var(--ok));transition:width .3s}
+.btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-size:13px;white-space:nowrap;transition:all .15s}
+.btn:hover{border-color:var(--acc);color:var(--acc2)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--acc2)}
+.btn.danger{border-color:var(--err);color:var(--err)}
+.btn.ghost{background:transparent}
+.btn.small{padding:4px 10px;font-size:12px;border-radius:7px}
+
+/* ---------- 主布局 ---------- */
+#main{flex:1;display:flex;overflow:hidden}
+#leftPanel{width:320px;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:14px;flex-shrink:0;display:flex;flex-direction:column;gap:14px}
+#centerPanel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#rightPanel{width:400px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
+
+/* ---------- 表单 ---------- */
+.field label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+.field input[type=text],.field select,.field textarea{width:100%;padding:7px 9px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:13px;outline:none;font-family:inherit}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--acc)}
+.field textarea{resize:vertical;min-height:44px}
+.field .hint{font-size:11px;color:var(--skip);margin-top:3px}
+.secTitle{font-size:12px;font-weight:600;color:var(--acc2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:10px}
+
+/* 类型卡片 */
+#typeCards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.typeCard{padding:10px 4px;text-align:center;border:1.5px solid var(--line);border-radius:var(--radius);cursor:pointer;transition:all .15s;background:var(--panel2)}
+.typeCard:hover{border-color:var(--acc)}
+.typeCard.active{border-color:var(--acc);background:rgba(91,140,255,.12);color:var(--acc2);font-weight:600}
+.typeCard .ico{font-size:18px;display:block;margin-bottom:3px}
+
+/* 目录选择 */
+#dirRow{display:flex;gap:6px}
+#dirRow input{flex:1}
+#dirBrowser{display:none;border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:8px;max-height:230px;overflow-y:auto;font-size:12.5px}
+#dirBrowser .dirItem{padding:4px 8px;border-radius:5px;cursor:pointer;color:var(--txt);display:flex;justify-content:space-between}
+#dirBrowser .dirItem:hover{background:rgba(91,140,255,.15)}
+#dirBrowser .crumb{color:var(--acc2);cursor:pointer;padding:3px 0;font-size:12px;border-bottom:1px solid var(--line);margin-bottom:4px}
+
+/* 开关行 */
+.switchRow{display:flex;align-items:center;justify-content:space-between;padding:4px 0}
+.switchRow span{font-size:12.5px;color:var(--txt)}
+input[type=checkbox]{accent-color:var(--acc);width:15px;height:15px;cursor:pointer}
+input[type=range]{accent-color:var(--acc);width:110px}
+
+/* ---------- 中部：文件网格 ---------- */
+#gridHeader{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
+#gridHeader .title{font-weight:600;font-size:13.5px}
+#filterBtns{display:flex;gap:5px}
+.fbtn{padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;font-size:11.5px}
+.fbtn.active{border-color:var(--acc);color:var(--acc2);background:rgba(91,140,255,.1)}
+#fileGrid{flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px;align-content:start}
+.fileCard{border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;background:var(--panel2);position:relative;transition:all .12s}
+.fileCard:hover{border-color:var(--acc);transform:translateY(-2px)}
+.fileCard.selected{border-color:var(--acc);box-shadow:0 0 0 2px rgba(91,140,255,.4)}
+.fileCard img{width:100%;height:110px;object-fit:cover;display:block;background:#0a0c10}
+.fileCard .fname{font-size:10.5px;padding:4px 6px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fileCard .badge{position:absolute;top:5px;right:5px;width:10px;height:10px;border-radius:50%;border:2px solid #0a0c10}
+.st-pending .badge{background:var(--skip)} .st-running .badge{background:var(--warn);animation:pulse 1s infinite}
+.st-done .badge{background:var(--ok)} .st-edited .badge{background:var(--acc)}
+.st-error .badge{background:var(--err)} .st-skipped .badge{background:#4b5263}
+.st-running img{opacity:.55}
+.fileCard .errtag{position:absolute;bottom:0;left:0;right:0;background:rgba(224,86,106,.85);color:#fff;font-size:10px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none}
+.st-error .errtag{display:block}
+@keyframes pulse{50%{opacity:.4}}
+
+/* ---------- 中部：日志 ---------- */
+#logPanel{height:150px;border-top:1px solid var(--line);background:#0b0d12;display:flex;flex-direction:column;flex-shrink:0}
+#logPanel .loghead{display:flex;justify-content:space-between;align-items:center;padding:5px 12px;border-bottom:1px solid var(--line)}
+#logPanel .loghead span{font-size:11.5px;color:var(--dim)}
+#logBox{flex:1;overflow-y:auto;padding:6px 12px;font-family:Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.65}
+#logBox .l-info{color:#9db4e8} #logBox .l-ok{color:var(--ok)} #logBox .l-err{color:var(--err)}
+#logBox .l-warn{color:var(--warn)} #logBox .l-dim{color:var(--skip)} #logBox .l-sys{color:#c792ea}
+#logBox .t{color:#525b6e;margin-right:6px}
+
+/* ---------- 右侧：预览 ---------- */
+#previewEmpty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--skip);font-size:13px;flex-direction:column;gap:8px}
+#previewBody{display:none;flex-direction:column;flex:1;overflow:hidden}
+#previewImg{max-height:46vh;object-fit:contain;background:#0a0c10;border-bottom:1px solid var(--line);cursor:zoom-in}
+#previewImg.zoomed{max-height:none;height:auto;cursor:zoom-out}
+#previewInfo{padding:10px 12px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+#previewInfo .pname{font-size:12px;color:var(--dim);word-break:break-all}
+#captionBox{width:100%;min-height:130px;padding:9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:12.5px;line-height:1.6;font-family:inherit;resize:vertical;flex-shrink:0}
+#captionBox:focus{border-color:var(--acc);outline:none}
+#transBox{min-height:56px;padding:9px;border-radius:8px;background:var(--panel2);color:var(--dim);font-size:12.5px;line-height:1.6;display:none}
+#transBox.show{display:block}
+#previewBtns{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+.statusLine{font-size:11.5px;color:var(--skip);display:flex;gap:12px;flex-wrap:wrap}
+.statusLine b{color:var(--txt);font-weight:600}
+
+/* 模态 */
+#modalOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:center;justify-content:center}
+#modalOverlay.show{display:flex}
+#promptModal{width:min(720px,90vw);max-height:80vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+#promptModal .mhead{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600}
+#promptModal textarea{flex:1;margin:12px;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-family:Consolas,monospace;font-size:12px;line-height:1.6;resize:none;outline:none}
+#promptModal .mfoot{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;font-size:12px;color:var(--skip)}
+.modal2{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:center;justify-content:center}
+.modal2.show{display:flex}
+.modal2Box{max-height:84vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+.modal2Box .mhead{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600;gap:10px}
+.modal2Scroll{overflow-y:auto;flex:1}
+textarea{font-family:inherit}
+#auditBody{padding:12px 16px}
+.auditGroup{border:1px solid var(--line);border-radius:9px;margin-bottom:10px;overflow:hidden}
+.auditGroup>.agHead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--panel2);cursor:pointer;font-size:13px;font-weight:600}
+.auditGroup>.agHead .cnt{color:var(--err);font-weight:700}
+.auditGroup>.agHead .arrow{color:var(--dim);transition:transform .15s}
+.auditGroup.open .agHead .arrow{transform:rotate(90deg)}
+.auditFiles{display:none;border-top:1px solid var(--line)}
+.auditGroup.open .auditFiles{display:block}
+.auditFile{display:flex;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);font-size:12px;align-items:flex-start}
+.auditFile:last-child{border-bottom:none}
+.auditFile .afName{color:var(--acc2);cursor:pointer;flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.auditFile .afCap{color:var(--dim);flex:1;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.auditFile .afTag{background:rgba(224,86,106,.15);color:var(--err);border-radius:4px;padding:1px 6px;font-size:11px;flex-shrink:0}
+.repHit{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px}
+.repHit .rhName{color:var(--acc2);font-weight:600;margin-bottom:4px}
+.repHit .rhBefore{color:var(--err);text-decoration:line-through;opacity:.75;word-break:break-all}
+.repHit .rhAfter{color:var(--ok);word-break:break-all}
+.repHit .rhArrow{color:var(--dim);margin:2px 0}
+#queueList .qItem{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:12.5px}
+#queueList .qItem .qDir{flex:1;word-break:break-all;color:var(--txt)}
+#queueList .qItem .qMeta{color:var(--dim);white-space:nowrap}
+#queueList .qItem .qRun{color:var(--warn);font-weight:600}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--acc);color:var(--txt);padding:9px 20px;border-radius:9px;font-size:13px;z-index:200;display:none;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+.toast.show{display:block;animation:fadein .2s}
+.empty-hint{grid-column:1/-1;text-align:center;color:var(--skip);padding:60px 0;font-size:13px}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#333c4e;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#435070}
+::-webkit-scrollbar-track{background:transparent}
+
+/* 日志面板折叠 */
+#logPanel{transition:height .2s}
+#logPanel.collapsed{height:34px}
+#logPanel.collapsed #logBox{display:none}
+#logPanel .loghead{cursor:pointer;user-select:none}
+/* 完成横幅 */
+.doneBanner{margin:0 12px 8px;padding:10px 16px;border-radius:9px;background:rgba(63,185,111,.14);
+  border:1px solid var(--ok);color:var(--ok);font-size:13px;font-weight:600;text-align:center;
+  animation:fadein .25s}
+.doneBanner.warn{background:rgba(224,165,63,.12);border-color:var(--warn);color:var(--warn)}
+/* 键盘提示 */
+.kbdHint{font-size:10.5px;color:var(--skip);padding:2px 12px 6px}
+.kbdHint kbd{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10px}
+/* 质检长度分布 */
+.lenDist{display:flex;align-items:flex-end;gap:3px;height:56px;padding:10px 12px 4px;border-bottom:1px solid var(--line)}
+.lenDist .bar{flex:1;min-width:14px;background:linear-gradient(180deg,var(--acc),rgba(91,140,255,.35));border-radius:3px 3px 0 0;position:relative}
+.lenDist .bar span{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-size:9.5px;color:var(--skip)}
+.lenDist .bar .v{position:absolute;top:-14px;left:0;right:0;text-align:center;font-size:9.5px;color:var(--dim)}
+.lenDistWrap{padding-bottom:18px}
+.lenDistMeta{display:flex;gap:14px;font-size:11.5px;color:var(--dim);padding:4px 12px 8px}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="logo">🏷️ LoRA Captioner</div>
+  <div id="progressWrap"><div id="progressBar"></div></div>
+  <div class="stat" id="statText">待命</div>
+  <button class="btn primary" id="btnStart">▶ 开始打标</button>
+  <button class="btn" id="btnQueueAdd" title="把当前配置+目录加入队列，可加多个目录排队跑">📥 排队</button>
+  <button class="btn danger" id="btnStop" disabled>■ 停止</button>
+  <button class="btn ghost" id="btnAudit" title="质检当前目录的 caption">🔍 质检</button>
+  <button class="btn ghost" id="btnReplace" title="批量查找替换 caption">✏️ 替换</button>
+  <button class="btn ghost" id="btnClear">🧹 清屏</button>
+</div>
+
+<div id="main">
+  <!-- 左：配置 -->
+  <div id="leftPanel">
+    <div>
+      <div class="secTitle">打标类型</div>
+      <div id="typeCards" style="grid-template-columns:1fr 1fr 1fr 1fr">
+        <div class="typeCard active" data-type="person"><span class="ico">👤</span>人物</div>
+        <div class="typeCard" data-type="clothing"><span class="ico">👗</span>服装</div>
+        <div class="typeCard" data-type="style"><span class="ico">🎨</span>风格</div>
+        <div class="typeCard" data-type="body"><span class="ico">🧍</span>身材</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="secTitle">数据目录</div>
+      <div class="field">
+        <div id="dirRow">
+          <input type="text" id="dirInput" placeholder="D:\images\my_dataset">
+          <button class="btn small" id="btnBrowse">📂</button>
+        </div>
+        <div id="dirBrowser"></div>
+        <div class="switchRow"><span>含子目录</span><input type="checkbox" id="optRecursive"></div>
+      </div>
+    </div>
+
+    <div id="personFields">
+      <div class="secTitle">人物设置</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>人物名字（如 Yanni）</label>
+        <input type="text" id="personName" placeholder="留空则用触发词模式">
+        <div class="hint">填名字 → caption 以人名开头；不填 → 走泛化触发词</div>
+      </div>
+      <div class="field">
+        <label>泛化主体（人名留空时用）</label>
+        <input type="text" id="genericSubject" placeholder="a young East Asian woman">
+      </div>
+    </div>
+
+    <div id="clothingFields" style="display:none">
+      <div class="secTitle">服装设置</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>服装 LoRA 名称</label>
+        <input type="text" id="clothingName" placeholder="hanfu_outfit">
+      </div>
+    </div>
+
+    <div id="styleFields" style="display:none">
+      <div class="secTitle">风格设置</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>风格 LoRA 名称（如 XiuRen_Style）</label>
+        <input type="text" id="styleName" placeholder="XiuRen_Style">
+      </div>
+    </div>
+
+    <div id="bodyFields" style="display:none">
+      <div class="secTitle">身材设置</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>身材 LoRA 名称（如 slim_waist_body）</label>
+        <input type="text" id="bodyName" placeholder="slim_waist_body">
+        <div class="hint">caption 只写服装/姿态/场景，体型本身交给 LoRA 学</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="secTitle">触发词</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>触发词 Trigger Word</label>
+        <input type="text" id="triggerWord" placeholder="sks / ohwx / 风格名（可留空）">
+        <div class="hint" id="triggerHint">程序自动拼接到每条 caption 开头</div>
+      </div>
+      <div class="switchRow"><span>触发词位置</span>
+        <select id="triggerPosition" style="width:110px;padding:4px;border-radius:6px;background:var(--panel2);color:var(--txt);border:1px solid var(--line)">
+          <option value="prefix">开头</option>
+          <option value="suffix">结尾</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <div class="secTitle">打标引擎</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>Provider</label>
+        <select id="providerSel"><option>加载中…</option></select>
+      </div>
+      <div class="field">
+        <label>模型（打标用）</label>
+        <select id="modelSel"><option>先选 Provider</option></select>
+        <div class="hint" id="modelHint"></div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label>翻译模型（英文→中文展示）</label>
+        <select id="transModelSel"><option>跟打标模型一致</option></select>
+        <div style="text-align:right;margin-top:4px"><button class="btn small ghost" id="btnRefreshProv">🔄 刷新引擎列表</button></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="secTitle">高级</div>
+      <div class="field" style="margin-bottom:8px">
+        <label>风格倾向提示（注入模板）</label>
+        <textarea id="styleHint" rows="2" placeholder="可选。如：偏写实摄影 / 柔光室内"></textarea>
+      </div>
+      <div class="field">
+        <label>附加指令（注入模板）</label>
+        <textarea id="extraInstr" rows="2" placeholder="可选。如：特别强调手部姿态"></textarea>
+      </div>
+      <div class="switchRow"><span>跳过已有 caption（断点续跑）</span><input type="checkbox" id="optSkip" checked></div>
+      <div class="switchRow"><span>试跑模式（先跑前 2 张）</span><input type="checkbox" id="optTrial"></div>
+      <div class="switchRow"><span>文件名构图联动</span><input type="checkbox" id="optShotTags" checked><span class="hint" style="font-size:10.5px">_head/_half/_full → 补构图词</span></div>
+      <div class="switchRow"><span>并发数 <b id="concVal" style="color:var(--acc2)">3</b></span><input type="range" id="optConcurrency" min="1" max="8" value="3"></div>
+      <button class="btn small ghost" id="btnShowPrompt" style="margin-top:6px">👁 预览系统提示词</button>
+    </div>
+  </div>
+
+  <!-- 中：文件网格 + 日志 -->
+  <div id="centerPanel">
+    <div id="gridHeader">
+      <span class="title">文件列表</span>
+      <span class="stat" id="gridCount" style="color:var(--dim);font-size:12px"></span>
+      <div style="flex:1"></div>
+      <div id="filterBtns">
+        <button class="fbtn active" data-f="all">全部</button>
+        <button class="fbtn" data-f="pending">待处理</button>
+        <button class="fbtn" data-f="done">已完成</button>
+        <button class="fbtn" data-f="error">失败</button>
+        <button class="fbtn" data-f="skipped">跳过</button>
+      </div>
+      <button class="btn small ghost" id="btnRescan">🔄 重新扫描</button>
+    </div>
+    <div id="fileGrid"><div class="empty-hint">左侧选目录后自动扫描；或点「重新扫描」</div></div>
+    <div class="kbdHint">←/→ 切换图片 · Esc 关闭弹窗 · 点日志标题栏折叠日志</div>
+    <div id="logPanel">
+      <div class="loghead"><span>处理日志</span><button class="btn small ghost" id="btnCopyLog">复制</button></div>
+      <div id="logBox"></div>
+    </div>
+  </div>
+
+  <!-- 右：预览 -->
+  <div id="rightPanel">
+    <div id="previewEmpty">🖼️<div>点击左侧文件卡片<br>预览图片与 caption</div></div>
+    <div id="previewBody">
+      <img id="previewImg" alt="">
+      <div id="previewInfo">
+        <div class="pname" id="pvName"></div>
+        <div class="statusLine" id="pvStatus"></div>
+        <textarea id="captionBox" placeholder="caption 内容（可直接编辑）"></textarea>
+        <div id="transBox"></div>
+        <div id="previewBtns">
+          <button class="btn small primary" id="btnSaveCap">💾 保存</button>
+          <button class="btn small" id="btnRetag">🔄 重打</button>
+          <button class="btn small" id="btnTrans">🈶 译中文</button>
+          <button class="btn small ghost" id="btnOpenImg">🖼 原图</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 系统提示词预览 -->
+<div id="modalOverlay">
+  <div id="promptModal">
+    <div class="mhead"><span>当前配置生成的系统提示词</span><button class="btn small ghost" id="btnCloseModal">✕</button></div>
+    <textarea id="promptTextArea" readonly></textarea>
+    <div class="mfoot"><span>模板文件在 prompt_templates/*.md，可自行编辑</span><button class="btn small" id="btnCopyPrompt">复制</button></div>
+  </div>
+</div>
+
+<!-- 质检面板 -->
+<div id="auditOverlay" class="modal2">
+  <div class="modal2Box" style="width:min(860px,92vw)">
+    <div class="mhead"><span>🔍 质检报告 <span id="auditSummary" style="color:var(--dim);font-weight:400;font-size:12px"></span></span><button class="btn small ghost" id="btnCloseAudit">✕</button></div>
+    <div id="auditBody" class="modal2Scroll"></div>
+  </div>
+</div>
+
+<!-- 批量替换 -->
+<div id="replaceOverlay" class="modal2">
+  <div class="modal2Box" style="width:min(760px,92vw)">
+    <div class="mhead"><span>✏️ 批量查找替换</span><button class="btn small ghost" id="btnCloseReplace">✕</button></div>
+    <div class="modal2Scroll" style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+      <div class="field"><label>作用目录</label><input type="text" id="repDir" placeholder="默认当前目录"></div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1"><label>查找</label><input type="text" id="repFind" placeholder="如误写词"></div>
+        <div class="field" style="flex:1"><label>替换为</label><input type="text" id="repWith" placeholder="可为空=删除"></div>
+      </div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <label class="switchRow"><input type="checkbox" id="repWhole"> <span>全词匹配</span></label>
+        <label class="switchRow"><input type="checkbox" id="repCase"> <span>区分大小写</span></label>
+        <label class="switchRow"><input type="checkbox" id="repBackup" checked> <span>替换前备份 .bak</span></label>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="btnRepPreview">👁 预览影响</button>
+        <button class="btn danger" id="btnRepApply" disabled>✅ 确认替换</button>
+      </div>
+      <div id="repResult" style="max-height:300px;overflow-y:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 队列面板 -->
+<div id="queueOverlay" class="modal2">
+  <div class="modal2Box" style="width:min(640px,90vw)">
+    <div class="mhead"><span>📥 批处理队列</span><div style="display:flex;gap:6px"><button class="btn small ghost" id="btnQueueClear">清空队列</button><button class="btn small ghost" id="btnCloseQueue">✕</button></div></div>
+    <div class="modal2Scroll" style="padding:12px 16px">
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <textarea id="queueDirs" rows="3" style="flex:1" placeholder="每行一个目录路径，用当前左侧配置依次打标"></textarea>
+        <button class="btn primary" id="btnQueueAddMany" style="align-self:flex-end">全部入队</button>
+      </div>
+      <div id="queueList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+let state = {
+  type: "person",
+  providers: [],
+  curProvider: "",
+  curModel: "",
+  transModel: "",
+  files: [],            // {path,name,status,caption,error,duration_ms}
+  selected: null,
+  filter: "all",
+  running: false,
+  lastDir: "",
+};
+
+/* ===================== 工具 ===================== */
+function toast(msg, ms=2200){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),ms); }
+function log(kind, msg){
+  const box=$("#logBox");
+  const t=new Date().toTimeString().slice(0,8);
+  const div=document.createElement("div");
+  div.innerHTML=`<span class="t">${t}</span><span class="l-${kind}">${msg.replace(/</g,"&lt;")}</span>`;
+  box.appendChild(div);
+  while(box.children.length>600) box.removeChild(box.firstChild);
+  box.scrollTop=box.scrollHeight;
+}
+function fmtSize(b){ return b>1048576?(b/1048576).toFixed(1)+"MB":(b/1024).toFixed(0)+"KB"; }
+
+/* ===================== 类型切换 ===================== */
+$$("#typeCards .typeCard").forEach(c=>c.addEventListener("click",()=>{
+  $$("#typeCards .typeCard").forEach(x=>x.classList.remove("active"));
+  c.classList.add("active");
+  state.type=c.dataset.type;
+  $("#personFields").style.display = state.type==="person"?"":"none";
+  $("#clothingFields").style.display = state.type==="clothing"?"":"none";
+  $("#styleFields").style.display = state.type==="style"?"":"none";
+  $("#bodyFields").style.display = state.type==="body"?"":"none";
+  $("#triggerHint").textContent = state.type==="style"
+    ? "风格 LoRA 可不填触发词（纯内容描述流）"
+    : (state.type==="body"
+      ? "身材 LoRA 默认无触发词（你的既有惯例），填了则前置拼接"
+      : "程序自动拼接到每条 caption 开头");
+}));
+
+/* ===================== Provider ===================== */
+async function loadProviders(force){
+  try{
+    const url=force?"/api/providers?refresh=true":"/api/providers";
+    const r=await fetch(url); const d=await r.json();
+    state.providers=d.providers||[];
+    const sel=$("#providerSel"); sel.innerHTML="";
+    if(!state.providers.length){ sel.innerHTML="<option>（未发现可用 Provider）</option>"; return; }
+    state.providers.forEach(p=>{
+      const o=document.createElement("option");
+      o.value=p.provider_id; o.textContent=`${p.label}（${p.models.length} 模型）`;
+      sel.appendChild(o);
+    });
+    // 恢复上次或默认选 dsh:buddy
+    const last=state.lastCfg&&state.lastCfg.provider_id;
+    const buddy=state.providers.find(p=>p.provider_id==="dsh:buddy");
+    const pick=state.providers.find(p=>p.provider_id===last)||buddy||state.providers[0];
+    sel.value=pick.provider_id;
+    onProviderChange();
+  }catch(e){ log("err","Provider 列表加载失败: "+e.message); }
+}
+function onProviderChange(){
+  const pid=$("#providerSel").value;
+  const p=state.providers.find(x=>x.provider_id===pid);
+  state.curProvider=pid;
+  const msel=$("#modelSel"); msel.innerHTML="";
+  if(!p){ state.curModel=""; return; }
+  const visionModels=p.models.filter(m=>m.vision);
+  const nonVision=p.models.filter(m=>!m.vision);
+  if(visionModels.length){
+    const g=document.createElement("optgroup"); g.label="✓ 可看图";
+    visionModels.forEach(m=>{const o=document.createElement("option");o.value=m.id;o.textContent=m.name;g.appendChild(o);});
+    msel.appendChild(g);
+  }
+  if(nonVision.length){
+    const g=document.createElement("optgroup"); g.label="✗ 不支持看图";
+    nonVision.forEach(m=>{const o=document.createElement("option");o.value=m.id;o.textContent=m.name;g.appendChild(o);});
+    msel.appendChild(g);
+  }
+  // 默认挑上次用过的或第一个看图模型
+  const lastModel=state.lastCfg&&state.lastCfg.model;
+  const cand=p.models.find(m=>m.id===lastModel)||visionModels[0]||p.models[0];
+  if(cand){ msel.value=cand.id; state.curModel=cand.id; }
+  $("#modelHint").textContent = p.kind==="ollama" ? "本地 Ollama；模型不支持看图时返回为空" : "DSH 渠道模型；「看图」标注来自渠道名册";
+  fillTransModels(p);
+}
+function fillTransModels(p){
+  const tsel=$("#transModelSel"); const cur=tsel.value;
+  tsel.innerHTML="<option value=''>（跟打标模型一致）</option>";
+  (p.models||[]).forEach(m=>{const o=document.createElement("option");o.value=m.id;o.textContent=m.name;tsel.appendChild(o);});
+  tsel.value=cur;
+}
+$("#providerSel").addEventListener("change",onProviderChange);
+$("#modelSel").addEventListener("change",()=>{ state.curModel=$("#modelSel").value; });
+$("#btnRefreshProv").addEventListener("click",async()=>{
+  const btn=$("#btnRefreshProv"); btn.disabled=true; btn.textContent="⏳ 刷新中…";
+  try{ await loadProviders(true); toast("引擎列表已刷新"); }
+  finally{ btn.disabled=false; btn.textContent="🔄 刷新引擎列表"; }
+});
+
+/* ===================== 目录浏览 ===================== */
+async function openBrowser(){
+  const b=$("#dirBrowser");
+  if(b.style.display==="block"){ b.style.display="none"; return; }
+  await browseTo(state.lastDir||"D:\\deepseek");
+  b.style.display="block";
+}
+async function browseTo(path){
+  const r=await fetch("/api/browse?path="+encodeURIComponent(path));
+  const d=await r.json();
+  const b=$("#dirBrowser");
+  b.innerHTML="";
+  const crumb=document.createElement("div");
+  crumb.className="crumb";
+  crumb.textContent="📁 "+d.current+"    （点击进入 · 选此目录请点下方按钮）";
+  crumb.addEventListener("click",()=>{ $("#dirInput").value=d.current; });
+  b.appendChild(crumb);
+  if(d.parent){
+    const up=document.createElement("div");
+    up.className="dirItem"; up.innerHTML="<span>⬆ ..</span>";
+    up.addEventListener("click",()=>browseTo(d.parent));
+    b.appendChild(up);
+  }
+  d.dirs.forEach(x=>{
+    const it=document.createElement("div");
+    it.className="dirItem"; it.innerHTML=`<span>📁 ${x.name}</span>`;
+    it.addEventListener("click",()=>browseTo(x.path));
+    b.appendChild(it);
+  });
+  const pick=document.createElement("button");
+  pick.className="btn small primary"; pick.style.margin="6px auto"; pick.style.display="block";
+  pick.textContent="选定此目录";
+  pick.addEventListener("click",()=>{ $("#dirInput").value=d.current; b.style.display="none"; scanDir(); });
+  b.appendChild(pick);
+}
+$("#btnBrowse").addEventListener("click",openBrowser);
+$("#dirInput").addEventListener("change",scanDir);
+
+/* ===================== 扫描 ===================== */
+async function scanDir(){
+  const dir=$("#dirInput").value.trim();
+  if(!dir) return;
+  const r=await fetch("/api/scan2",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:dir,recursive:$("#optRecursive").checked})});
+  const d=await r.json();
+  if(d.error){ toast(d.error); return; }
+  state.lastDir=dir;
+  // 合并已有任务状态（清屏前保留的 done 状态在 grid 上标注）
+  const prev=new Map(state.files.map(f=>[f.path,f]));
+  state.files=(d.items||[]).map(it=>{
+    const p=prev.get(it.path);
+    const base={path:it.path,name:it.name,status:it.has_caption?(p&&p.status!=="pending"?p.status:"skipped"):"pending",caption:"",error:"",duration_ms:0,size:it.size};
+    return base;
+  });
+  renderGrid();
+  // 重置进度条（新批次）
+  $("#progressBar").style.width="0%";
+  $("#statText").textContent=d.count?`${d.count} 张待命`:"待命";
+  log("info",`扫描 ${dir}：${d.count} 张图片（${state.files.filter(f=>f.status==="skipped").length} 张已有 caption）`);
+}
+
+/* ===================== 网格渲染 ===================== */
+function renderGrid(){
+  const grid=$("#fileGrid");
+  grid.innerHTML="";
+  const files=state.files.filter(f=>state.filter==="all"||f.status===state.filter||(state.filter==="done"&&f.status==="edited"));
+  $("#gridCount").textContent=state.files.length?`${files.length}/${state.files.length} 张`:"";
+  if(!files.length){
+    grid.innerHTML=`<div class="empty-hint">${state.files.length?"当前筛选无文件":"左侧选目录后自动扫描；或点「重新扫描」"}</div>`;
+    return;
+  }
+  files.forEach(f=>{
+    const card=document.createElement("div");
+    card.className=`fileCard st-${f.status}`+(state.selected===f.path?" selected":"");
+    card.dataset.path=f.path;
+    card.innerHTML=`<img loading="lazy" src="/api/image?path=${encodeURIComponent(f.path)}">
+      <div class="badge"></div><div class="fname">${f.name}</div>
+      <div class="errtag">${f.error||"错误"}</div>`;
+    card.addEventListener("click",()=>selectFile(f.path));
+    grid.appendChild(card);
+  });
+}
+function updateCard(path){
+  const f=state.files.find(x=>x.path===path); if(!f) return;
+  const card=document.querySelector(`.fileCard[data-path="${CSS.escape(path)}"]`);
+  if(!card) return;
+  card.className=`fileCard st-${f.status}`+(state.selected===path?" selected":"");
+  const et=card.querySelector(".errtag"); if(f.error) et.textContent=f.error;
+  if(state.filter!=="all"&&f.status!==state.filter&&!(state.filter==="done"&&f.status==="edited")){ card.remove(); }
+}
+$$("#filterBtns .fbtn").forEach(b=>b.addEventListener("click",()=>{
+  $$("#filterBtns .fbtn").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+  state.filter=b.dataset.f; renderGrid();
+}));
+$("#btnRescan").addEventListener("click",scanDir);
+
+/* ===================== 预览 ===================== */
+async function selectFile(path){
+  state.selected=path;
+  $$(".fileCard").forEach(c=>c.classList.toggle("selected",c.dataset.path===path));
+  const f=state.files.find(x=>x.path===path);
+  $("#previewEmpty").style.display="none";
+  $("#previewBody").style.display="flex";
+  $("#previewImg").src="/api/image?path="+encodeURIComponent(path);
+  $("#previewImg").classList.remove("zoomed");
+  $("#pvName").textContent=path;
+  // 读 caption
+  const r=await fetch("/api/caption?path="+encodeURIComponent(path));
+  const d=await r.json();
+  if(f){ f.caption=d.caption; }
+  $("#captionBox").value=d.caption||"";
+  $("#captionBox").disabled=false;
+  $("#transBox").classList.remove("show");
+  const st=f?`<span>状态 <b>${
+    {pending:"待处理",running:"打标中…",done:"✓ 完成",edited:"✎ 已编辑",error:"✗ 失败",skipped:"⤼ 跳过（已有）"}[f.status]||f.status  }</b></span><span>耗时 <b>${f.duration_ms?(f.duration_ms/1000).toFixed(1)+"s":"-"}</b></span>`:"";
+  $("#pvStatus").innerHTML=st;
+}
+$("#previewImg").addEventListener("click",()=>$("#previewImg").classList.toggle("zoomed"));
+
+$("#btnSaveCap").addEventListener("click",async()=>{
+  if(!state.selected) return;
+  const content=$("#captionBox").value;
+  const r=await fetch("/api/caption",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({path:state.selected,content})});
+  const d=await r.json();
+  if(d.error){ toast("保存失败: "+d.error); return; }
+  const f=state.files.find(x=>x.path===state.selected);
+  if(f){ f.status="edited"; f.caption=content; updateCard(state.selected); }
+  log("ok",`已保存${d.backup?"（旧文件备份 .bak）":""}: ${state.selected.split("\\").pop()}`);
+  toast("已保存"+(d.backup?"，旧文件已备份 .bak":""));
+});
+
+function collectParams(extra={}){
+  return Object.assign({
+    lora_type:state.type,
+    provider_id:$("#providerSel").value,
+    model:$("#modelSel").value,
+    person_name:$("#personName").value.trim(),
+    generic_subject:$("#genericSubject").value.trim(),
+    trigger_word:$("#triggerWord").value.trim(),
+    trigger_position:$("#triggerPosition").value,
+    style_hint:$("#styleHint").value.trim(),
+    extra_instructions:$("#extraInstr").value.trim(),
+  },extra);
+}
+
+$("#btnRetag").addEventListener("click",async()=>{
+  if(!state.selected) return;
+  const btn=$("#btnRetag"); btn.disabled=true; btn.textContent="⏳ 重打中…";
+  try{
+    const r=await fetch("/api/retag",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(Object.assign({path:state.selected},collectParams()))});
+    const d=await r.json();
+    if(d.error){ toast("重打失败: "+d.error); log("err","重打失败 "+d.error); return; }
+    $("#captionBox").value=d.caption;
+    const f=state.files.find(x=>x.path===state.selected);
+    if(f){ f.status="done"; f.caption=d.caption; updateCard(state.selected); }
+    log("ok",`单张重打完成${d.backup?"（备份 .bak）":""}: ${state.selected.split("\\").pop()}`);
+  }finally{ btn.disabled=false; btn.textContent="🔄 重打"; }
+});
+
+$("#btnTrans").addEventListener("click",async()=>{
+  const text=$("#captionBox").value.trim();
+  if(!text){ toast("没有可翻译的内容"); return; }
+  const btn=$("#btnTrans"); btn.disabled=true; btn.textContent="⏳ 翻译中…";
+  const tb=$("#transBox"); tb.classList.add("show"); tb.textContent="翻译中…";
+  try{
+    const model=$("#transModelSel").value||$("#modelSel").value;
+    const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({provider_id:$("#providerSel").value,model,text})});
+    const d=await r.json();
+    tb.textContent=d.error?("翻译失败: "+d.error):d.translation;
+  }finally{ btn.disabled=false; btn.textContent="🈶 译中文"; }
+});
+
+$("#btnOpenImg").addEventListener("click",()=>{
+  if(state.selected) window.open("/api/image?path="+encodeURIComponent(state.selected),"_blank");
+});
+
+/* ===================== 提示词预览 ===================== */
+$("#btnShowPrompt").addEventListener("click",async()=>{
+  const p=collectParams();
+  const qs=new URLSearchParams({lora_type:p.lora_type,person_name:p.person_name,generic_subject:p.generic_subject,
+    trigger_word:p.trigger_word,style_hint:p.style_hint,extra_instructions:p.extra_instructions});
+  const r=await fetch("/api/template?"+qs); const d=await r.json();
+  $("#promptTextArea").value=d.system_prompt||d.error||"";
+  $("#modalOverlay").classList.add("show");
+});
+$("#btnCloseModal").addEventListener("click",()=>$("#modalOverlay").classList.remove("show"));
+$("#modalOverlay").addEventListener("click",e=>{ if(e.target.id==="modalOverlay") $("#modalOverlay").classList.remove("show"); });
+$("#btnCopyPrompt").addEventListener("click",()=>{ navigator.clipboard.writeText($("#promptTextArea").value); toast("已复制"); });
+$("#btnCopyLog").addEventListener("click",()=>{ navigator.clipboard.writeText($("#logBox").innerText); toast("日志已复制"); });
+
+/* ===================== 批处理 ===================== */
+function setRunning(run){
+  state.running=run;
+  $("#btnStart").disabled=run; $("#btnStop").disabled=!run;
+}
+$("#btnStart").addEventListener("click",async()=>{
+  const dir=$("#dirInput").value.trim();
+  if(!dir){ toast("先选目录"); return; }
+  if(!$("#providerSel").value||!$("#modelSel").value){ toast("先选 Provider 和模型"); return; }
+  if(state.type==="person"&&!$("#personName").value.trim()&&!$("#genericSubject").value.trim()&&!$("#triggerWord").value.trim()){
+    toast("人物打标：人名 / 泛化主体 / 触发词至少填一个"); return;
+  }
+  const trial=$("#optTrial").checked;
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      directory:dir, lora_type:state.type,
+      provider_id:$("#providerSel").value, model:$("#modelSel").value,
+      person_name:$("#personName").value.trim(), generic_subject:$("#genericSubject").value.trim(),
+      trigger_word:$("#triggerWord").value.trim(), trigger_position:$("#triggerPosition").value,
+      style_hint:$("#styleHint").value.trim(), extra_instructions:$("#extraInstr").value.trim(),
+      skip_existing:$("#optSkip").checked, concurrency:+$("#optConcurrency").value,
+      recursive:$("#optRecursive").checked, limit:trial?2:0,
+      shot_tags:$("#optShotTags").checked,
+    })});
+  const d=await r.json();
+  if(d.error){ toast(d.error); log("err",d.error); return; }
+  setRunning(true);
+  if(trial){ log("warn","试跑模式：只处理前 2 张"); }
+  // 拉取初始状态同步文件
+  await syncState();
+});
+$("#btnStop").addEventListener("click",async()=>{
+  await fetch("/api/stop",{method:"POST"});
+  log("warn","已请求停止，等待在跑任务结束…");
+});
+$("#btnClear").addEventListener("click",async()=>{
+  if(state.running){ toast("先停止当前批次"); return; }
+  await fetch("/api/clear",{method:"POST"});
+  state.files=[]; state.selected=null;
+  $("#previewBody").style.display="none"; $("#previewEmpty").style.display="flex";
+  $("#logBox").innerHTML=""; $("#progressBar").style.width="0%";
+  $("#statText").textContent="待命"; $("#gridCount").textContent="";
+  renderGrid(); renderQueueBadge();
+  log("sys","已清屏，可以开始下一批次");
+});
+
+async function syncState(){
+  const r=await fetch("/api/state"); const d=await r.json();
+  setRunning(d.running);
+  const map=new Map((d.tasks||[]).map(t=>[t.path,t]));
+  state.files.forEach(f=>{
+    const t=map.get(f.path);
+    if(t){ f.status=t.status; f.caption=t.caption; f.error=t.error; f.duration_ms=t.duration_ms; updateCard(f.path); }
+  });
+  updateProgress(d.stats);
+}
+function updateProgress(st){
+  if(!st||!st.total){ return; }
+  const pct=Math.round((st.done+st.errors)/st.total*100);
+  $("#progressBar").style.width=pct+"%";
+  $("#statText").textContent=`${st.done+st.errors}/${st.total}（错误 ${st.errors}）`;
+}
+
+/* ===================== 质检面板 ===================== */
+$("#btnAudit").addEventListener("click",async()=>{
+  const dir=$("#dirInput").value.trim();
+  if(!dir){ toast("先选目录"); return; }
+  const ov=$("#auditOverlay"); ov.classList.add("show");
+  const body=$("#auditBody");
+  body.innerHTML='<div style="color:var(--dim);padding:20px;text-align:center">质检中…</div>';
+  $("#auditSummary").textContent="";
+  const r=await fetch("/api/audit",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:dir,recursive:$("#optRecursive").checked,
+      lora_type:state.type,trigger_word:$("#triggerWord").value.trim()})});
+  const d=await r.json();
+  if(d.error){ body.innerHTML=`<div style="color:var(--err);padding:16px">${d.error}</div>`; return; }
+  $("#auditSummary").textContent=`— ${d.audited}/${d.total_images} 张已打标，${d.issue_files} 张有问题`;
+  if(!d.issues.length){
+    body.innerHTML='<div style="color:var(--ok);padding:24px;text-align:center;font-size:14px">✅ 未发现问题，全部通过</div>';
+    return;
+  }
+  body.innerHTML="";
+  // 长度分布图
+  if(d.length_dist&&d.length_dist.hist&&Object.keys(d.length_dist.hist).length){
+    const wrap=document.createElement("div");
+    wrap.className="lenDistWrap";
+    const dist=document.createElement("div");
+    dist.className="lenDist";
+    const maxv=Math.max(...Object.values(d.length_dist.hist));
+    Object.entries(d.length_dist.hist).forEach(([bucket,v])=>{
+      const bar=document.createElement("div");
+      bar.className="bar"; bar.style.height=Math.max(8,v/maxv*100)+"%";
+      bar.innerHTML=`<span class="v">${v}</span><span>${bucket.split("-")[0]}</span>`;
+      dist.appendChild(bar);
+    });
+    const meta=document.createElement("div");
+    meta.className="lenDistMeta";
+    meta.innerHTML=`<span>词数分布（横轴=词数档，纵轴=张数）</span><span>min <b style="color:var(--txt)">${d.length_dist.min}</b></span><span>max <b style="color:var(--txt)">${d.length_dist.max}</b></span><span>平均 <b style="color:var(--txt)">${d.length_dist.avg}</b></span>`;
+    wrap.appendChild(dist); wrap.appendChild(meta);
+    body.appendChild(wrap);
+  }
+  d.issues.forEach(g=>{
+    const grp=document.createElement("div");
+    grp.className="auditGroup";
+    const head=document.createElement("div");
+    head.className="agHead";
+    head.innerHTML=`<span>${g.label}</span><span><span class="cnt">${g.files.length}</span> <span class="arrow">▶</span></span>`;
+    head.addEventListener("click",()=>grp.classList.toggle("open"));
+    grp.appendChild(head);
+    const files=document.createElement("div");
+    files.className="auditFiles";
+    g.files.forEach(f=>{
+      const row=document.createElement("div");
+      row.className="auditFile";
+      const tag=f.style_words?("<span class='afTag'>"+f.style_words.join(", ")+"</span>"):"";
+      row.innerHTML=`<span class="afName" title="${f.path}">${f.name}</span><span class="afCap">${f.caption||"<i>（无内容）</i>"}</span>${tag}`;
+      row.querySelector(".afName").addEventListener("click",()=>{ selectFile(f.path); ov.classList.remove("show"); });
+      files.appendChild(row);
+    });
+    grp.appendChild(files);
+    body.appendChild(grp);
+  });
+});
+$("#btnCloseAudit").addEventListener("click",()=>$("#auditOverlay").classList.remove("show"));
+$("#auditOverlay").addEventListener("click",e=>{ if(e.target.id==="auditOverlay") e.target.classList.remove("show"); });
+
+/* ===================== 批量替换 ===================== */
+$("#btnReplace").addEventListener("click",()=>{
+  $("#repDir").value=$("#dirInput").value.trim();
+  $("#repResult").innerHTML=""; $("#btnRepApply").disabled=true;
+  $("#replaceOverlay").classList.add("show");
+});
+$("#btnCloseReplace").addEventListener("click",()=>$("#replaceOverlay").classList.remove("show"));
+$("#replaceOverlay").addEventListener("click",e=>{ if(e.target.id==="replaceOverlay") e.target.classList.remove("show"); });
+
+async function runReplace(dry){
+  const find=$("#repFind").value;
+  if(!find.trim()){ toast("查找内容为空"); return; }
+  const body={
+    directory:$("#repDir").value.trim()||$("#dirInput").value.trim(),
+    recursive:$("#optRecursive").checked,
+    find, replace:$("#repWith").value,
+    whole_word:$("#repWhole").checked, case_sensitive:$("#repCase").checked,
+    dry_run:dry, keep_backup:$("#repBackup").checked,
+  };
+  const r=await fetch("/api/replace",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.error){ toast(d.error); return; }
+  const box=$("#repResult");
+  if(!d.matched){ box.innerHTML='<div style="color:var(--dim);padding:10px">没有匹配的文件</div>'; return; }
+  box.innerHTML=`<div style="font-size:12.5px;margin-bottom:8px;color:${dry?"var(--warn)":"var(--ok)"}">${dry?`预览：${d.matched} 个文件将被修改`:`已写入 ${d.written} 个文件（原文件备份 .bak）`}</div>`;
+  d.hits.forEach(h=>{
+    const div=document.createElement("div");
+    div.className="repHit";
+    div.innerHTML=`<div class="rhName">${h.name}（${h.count} 处）</div>
+      <div class="rhBefore">${h.before}</div><div class="rhArrow">↓</div><div class="rhAfter">${h.after}</div>`;
+    box.appendChild(div);
+  });
+  $("#btnRepApply").disabled=!dry;
+  if(!dry){ log("ok",`批量替换完成：${d.written} 个文件`); $("#btnRepApply").disabled=true; }
+  else log("info",`替换预览：${d.matched} 个文件命中「${find}」`);
+}
+$("#btnRepPreview").addEventListener("click",()=>runReplace(true));
+$("#btnRepApply").addEventListener("click",()=>runReplace(false));
+
+/* ===================== 多目录队列 ===================== */
+function collectStartParams(extra={}){
+  return Object.assign({
+    directory:$("#dirInput").value.trim(),
+    lora_type:state.type,
+    provider_id:$("#providerSel").value, model:$("#modelSel").value,
+    person_name:$("#personName").value.trim(), generic_subject:$("#genericSubject").value.trim(),
+    trigger_word:$("#triggerWord").value.trim(), trigger_position:$("#triggerPosition").value,
+    style_hint:$("#styleHint").value.trim(), extra_instructions:$("#extraInstr").value.trim(),
+    skip_existing:$("#optSkip").checked, concurrency:+$("#optConcurrency").value,
+    recursive:$("#optRecursive").checked, limit:$("#optTrial").checked?2:0,
+    shot_tags:$("#optShotTags").checked,
+  },extra);
+}
+$("#btnQueueAdd").addEventListener("click",async()=>{
+  const dir=$("#dirInput").value.trim();
+  if(!dir){ toast("先选目录"); return; }
+  const r=await fetch("/api/queue/add",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(collectStartParams())});
+  const d=await r.json();
+  if(d.error){ toast(d.error); return; }
+  toast(`已入队（第 ${d.position} 位）`);
+  log("info",`目录入队: ${dir}`);
+  renderQueueBadge();
+});
+$("#btnQueueAdd").addEventListener("contextmenu",e=>{ e.preventDefault(); $("#queueOverlay").classList.add("show"); loadQueue(); });
+$("#btnClear").addEventListener("click",async()=>{ renderQueueBadge(); });
+async function loadQueue(){
+  const r=await fetch("/api/queue"); const d=await r.json();
+  const list=$("#queueList"); list.innerHTML="";
+  if(d.running){
+    const cur=document.createElement("div");
+    cur.className="qItem"; cur.style.borderColor="var(--warn)";
+    cur.innerHTML=`<span class="qRun">▶ 处理中</span><span class="qDir">${d.current}</span>`;
+    list.appendChild(cur);
+  }
+  if(!d.queue.length&&!d.running){ list.innerHTML='<div style="color:var(--dim);padding:14px;text-align:center">队列为空</div>'; }
+  d.queue.forEach((q,i)=>{
+    const it=document.createElement("div");
+    it.className="qItem";
+    it.innerHTML=`<span class="qMeta">#${i+1}</span><span class="qDir">${q.directory}</span>
+      <span class="qMeta">${q.lora_type} · ${q.model||""}</span>
+      <button class="btn small danger">移除</button>`;
+    it.querySelector("button").addEventListener("click",async()=>{
+      await fetch("/api/queue/remove",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({directory:q.directory})});
+      loadQueue(); renderQueueBadge();
+    });
+    list.appendChild(it);
+  });
+}
+$("#btnQueueAddMany").addEventListener("click",async()=>{
+  const dirs=$("#queueDirs").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!dirs.length){ toast("先填目录，每行一个"); return; }
+  const params=collectStartParams({directory:dirs[0]});
+  const r=await fetch("/api/queue/add_many",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directories:dirs,params})});
+  const d=await r.json();
+  toast(`入队 ${d.added.length} 个${d.errors.length?`，失败 ${d.errors.length} 个`:""}`);
+  log("info",`批量入队 ${d.added.length} 个目录`);
+  $("#queueDirs").value="";
+  loadQueue(); renderQueueBadge();
+});
+$("#btnQueueClear").addEventListener("click",async()=>{
+  await fetch("/api/queue/clear",{method:"POST"});
+  loadQueue(); renderQueueBadge(); toast("队列已清空");
+});
+$("#btnCloseQueue").addEventListener("click",()=>$("#queueOverlay").classList.remove("show"));
+$("#queueOverlay").addEventListener("click",e=>{ if(e.target.id==="queueOverlay") e.target.classList.remove("show"); });
+function renderQueueBadge(){
+  fetch("/api/queue").then(r=>r.json()).then(d=>{
+    const btn=$("#btnQueueAdd");
+    btn.textContent=d.queue.length?`📥 排队(${d.queue.length})`:"📥 排队";
+  });
+}
+function loadQueueIfOpen(){
+  if($("#queueOverlay").classList.contains("show")) loadQueue();
+  // 队列推进时刷新网格为下一批
+  fetch("/api/queue").then(r=>r.json()).then(d=>{
+    if(d.current&&d.current!==$("#dirInput").value.trim()){
+      $("#dirInput").value=d.current;
+      scanDir();
+    }
+  });
+}
+
+/* ===================== SSE ===================== */
+let _editingCaption=false;
+$("#captionBox").addEventListener("focus",()=>_editingCaption=true);
+$("#captionBox").addEventListener("blur",()=>{ _editingCaption=false; });
+const es=new EventSource("/api/events");
+es.onmessage=ev=>{
+  const m=JSON.parse(ev.data);
+  switch(m.type){
+    case "batch_start":
+      log("sys",`批次开始：共 ${m.total} 张（待处理 ${m.pending}，跳过 ${m.total-m.pending}）`);
+      break;
+    case "task_start":{
+      const f=state.files.find(x=>x.path===m.path);
+      if(f){ f.status="running"; updateCard(m.path); }
+      log("dim",`▶ ${m.name}`);
+      break;}
+    case "task_done":{
+      const f=state.files.find(x=>x.path===m.path);
+      if(f){ f.status="done"; f.caption=m.caption; f.duration_ms=m.duration_ms; f.error=""; updateCard(m.path); }
+      const extras=[]; if(m.backup) extras.push("备份");
+      if(m.meta&&m.meta.style_words_removed) extras.push(`剔风格词${m.meta.style_words_removed}`);
+      if(m.meta&&m.meta.body_words_removed) extras.push(`剔体型词${m.meta.body_words_removed}`);
+      if(m.meta&&m.meta.shot_tag) extras.push("补构图词");
+      log("ok",`✓ ${m.name}（${(m.duration_ms/1000).toFixed(1)}s${extras.length?" ·"+extras.join("·"):""}）`);
+      // 正在编辑时不覆盖输入框（编辑保护）
+      if(state.selected===m.path&&!_editingCaption){ $("#captionBox").value=m.caption; $("#pvStatus").innerHTML=`<span>状态 <b>✓ 完成</b></span><span>耗时 <b>${(m.duration_ms/1000).toFixed(1)}s</b></span>`; }
+      break;}
+    case "task_error":{
+      const f=state.files.find(x=>x.path===m.path);
+      if(f){ f.status="error"; f.error=m.error; f.duration_ms=m.duration_ms; updateCard(m.path); }
+      log("err",`✗ ${m.name}: ${m.error}`);
+      break;}
+    case "batch_done":{
+      setRunning(false);
+      const s=m.stats;
+      log(m.cancelled?"warn":"sys",
+        `批次结束：成功 ${s.done}/${s.total} · 失败 ${s.errors} · 总耗时 ${s.elapsed_s}s · 平均 ${s.avg_s}s/张 · 成功率 ${s.success_rate}%`);
+      $("#progressBar").style.width="100%";
+      $("#statText").textContent=`完成 ${s.done}/${s.total} · 成功率 ${s.success_rate}% · ${s.elapsed_s}s`;
+      if(m.error) log("err","批处理异常: "+m.error);
+      // 试跑跑完自动取消勾选，防忘
+      if($("#optTrial").checked){ $("#optTrial").checked=false; log("dim","试跑模式已自动关闭"); }
+      // 完成横幅（有失败时警示色）
+      const banner=document.createElement("div");
+      banner.className="doneBanner"+(s.errors?" warn":"");
+      banner.textContent=s.errors
+        ?`⚠ 批次完成：${s.done} 成功 / ${s.errors} 失败（点失败文件可看错误，单张重打可重试）`
+        :`✅ 批次完成：${s.done}/${s.total} · 平均 ${s.avg_s}s/张`;
+      const grid=$("#fileGrid");
+      grid.parentNode.insertBefore(banner,grid);
+      setTimeout(()=>banner.remove(),8000);
+      renderQueueBadge();
+      break;}
+    case "queue_advance":
+      setRunning(true);
+      log("sys",`队列推进 → ${m.directory}（${m.total} 张，剩 ${m.remaining} 个目录）`);
+      toast(`队列下一个：${m.directory.split("\\").pop()}`);
+      renderQueueBadge(); loadQueueIfOpen();
+      break;
+    case "queue_skip":
+      log("err",`队列跳过 ${m.directory}: ${m.error}`);
+      renderQueueBadge();
+      break;
+  }
+};
+es.onerror=()=>{ /* SSE 断线自动重连 */ };
+
+/* ===================== 记住配置 ===================== */
+async function restoreConfig(){
+  try{
+    const r=await fetch("/api/config"); state.lastCfg=await r.json();
+    const c=state.lastCfg;
+    if(c.directory) $("#dirInput").value=c.directory;
+    if(c.person_name) $("#personName").value=c.person_name;
+    if(c.generic_subject) $("#genericSubject").value=c.generic_subject;
+    if(c.trigger_word) $("#triggerWord").value=c.trigger_word;
+    if(c.trigger_position) $("#triggerPosition").value=c.trigger_position;
+    if(c.style_hint) $("#styleHint").value=c.style_hint;
+    if(c.extra_instructions) $("#extraInstr").value=c.extra_instructions;
+    if(c.skip_existing!==undefined) $("#optSkip").checked=c.skip_existing;
+    if(c.shot_tags!==undefined) $("#optShotTags").checked=c.shot_tags;
+    if(c.concurrency) { $("#optConcurrency").value=c.concurrency; $("#concVal").textContent=c.concurrency; }
+    if(c.recursive!==undefined) $("#optRecursive").checked=c.recursive;
+    if(c.lora_type){
+      const card=document.querySelector(`.typeCard[data-type="${c.lora_type}"]`);
+      if(card) card.click();
+    }
+  }catch(e){}
+}
+$("#optConcurrency").addEventListener("input",()=>$("#concVal").textContent=$("#optConcurrency").value);
+
+/* ===================== 键盘导航 ===================== */
+document.addEventListener("keydown",e=>{
+  // 输入框/文本域/选择器里不拦截
+  const tag=(e.target.tagName||"").toLowerCase();
+  if(tag==="input"||tag==="textarea"||tag==="select") return;
+  if(!state.selected) return;
+  if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+    e.preventDefault();
+    const vis=state.files.filter(f=>state.filter==="all"||f.status===state.filter||(state.filter==="done"&&f.status==="edited"));
+    const idx=vis.findIndex(f=>f.path===state.selected);
+    let ni=idx+(e.key==="ArrowRight"?1:-1);
+    if(ni<0) ni=vis.length-1; if(ni>=vis.length) ni=0;
+    if(vis[ni]) selectFile(vis[ni].path);
+  }
+  if(e.key==="Escape"){
+    $$(".show").forEach(el=>el.classList.remove("show"));
+  }
+});
+
+/* ===================== 日志折叠 ===================== */
+$("#logPanel .loghead").addEventListener("click",e=>{
+  if(e.target.id==="btnCopyLog") return;
+  $("#logPanel").classList.toggle("collapsed");
+});
+$("#logPanel .loghead").style.cursor="pointer";
+$("#logPanel .loghead").title="点击折叠/展开日志";
+
+/* ===================== 启动 ===================== */
+(async function init(){
+  log("sys","LoRA Captioner 就绪");
+  await restoreConfig();
+  await loadProviders();
+  if($("#dirInput").value) await scanDir();
+  renderQueueBadge();
+})();
+</script>
+</body>
+</html>
