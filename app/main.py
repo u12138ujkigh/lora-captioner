@@ -42,7 +42,7 @@ _batch = cap.BatchState()
 # 放大是独立功能：自己的一份批次状态，与打标互不干扰
 _up_batch = {
     "running": False, "cancel": False,
-    "directory": "", "mode": "newfile", "multiplier": 3.0, "sharpen": False,
+    "directory": "", "out_dir": "", "multiplier": 3.0, "sharpen": False,
     "tasks": [],          # [{path,name,status,error,duration_ms,from,to}]
     "started_at": 0.0, "finished_at": 0.0,
 }
@@ -168,10 +168,11 @@ class UpscaleRequest(BaseModel):
     directory: str
     recursive: bool = False
     multiplier: float = 3.0
-    mode: str = "newfile"        # newfile=另存 _up | inplace=覆盖（备份 .orig）
     sharpen: bool = False
     limit: int = 0               # 0=全部；试跑传 2
-    skip_existing: bool = False  # 已放大过的跳过
+    skip_existing: bool = True   # 输出目录里已存在的跳过
+    out_dir: str = ""            # 留空 = 同级 目录名_放大
+    only_paths: list[str] = []   # 只处理这些（用于单张重试/重跑失败）
 
 
 class TranslateRequest(BaseModel):
@@ -228,6 +229,24 @@ def api_scan2(req: ScanRequest):
     return {"items": items, "count": len(items)}
 
 
+def _img_size(p: Path) -> tuple[int, int]:
+    """读图片宽高；失败返回 (0,0)。"""
+    try:
+        from PIL import Image
+        with Image.open(p) as im:
+            return im.width, im.height
+    except Exception:
+        return 0, 0
+
+
+def _up_out_dir(src_dir: str, out_dir: str = "") -> Path:
+    """放大输出目录：默认在源目录同级，名字加 _放大 后缀。"""
+    if out_dir and out_dir.strip():
+        return Path(out_dir.strip())
+    src = Path(src_dir)
+    return src.parent / (src.name + "_放大")
+
+
 def _up_stats() -> dict:
     tasks = _up_batch["tasks"]
     total = len(tasks)
@@ -246,9 +265,9 @@ def _up_stats() -> dict:
 
 
 def _run_upscale(req: dict) -> None:
-    """后台线程：逐张放大（串行，GPU 一次只跑一张才快）。"""
+    """后台线程：逐张放大（串行；ComfyUI 一次一张更稳且显存不互相抢）。"""
     tasks = _up_batch["tasks"]
-    mode = req["mode"]
+    out_root = Path(_up_batch["out_dir"])
     mult = float(req["multiplier"])
     sharpen = bool(req["sharpen"])
 
@@ -269,13 +288,9 @@ def _run_upscale(req: dict) -> None:
             with Image.open(src) as im:
                 before = list(im.size)
 
-            if mode == "inplace":
-                backup = src.with_suffix(src.suffix + ".orig")
-                if not backup.exists():
-                    shutil.copy2(src, backup)
-                dst = src
-            else:
-                dst = src.with_name(src.stem + "_up" + src.suffix)
+            # 输出到同级 目录名_放大，文件名保持原样
+            dst = out_root / src.name
+            out_root.mkdir(parents=True, exist_ok=True)
 
             res = upscaler.run_one(str(src), str(dst), mult, sharpen)
             if not res.get("ok"):
@@ -308,6 +323,50 @@ def _run_upscale(req: dict) -> None:
     emit({"type": "up_batch_done", "stats": _up_stats()})
 
 
+@app.post("/api/upscale/scan")
+def api_upscale_scan(req: UpscaleRequest):
+    """扫描预览：不启动，只列出待处理与已完成的图，供确认弹窗用。"""
+    directory = req.directory.strip()
+    src_root = Path(directory)
+    if not src_root.is_dir():
+        return JSONResponse({"error": f"目录不存在: {directory}"}, status_code=400)
+
+    out_root = _up_out_dir(directory, req.out_dir)
+    items = cap.scan_images(directory, req.recursive)
+    if not items:
+        return JSONResponse({"error": "目录里没有图片"}, status_code=400)
+
+    # 递归时排除输出目录自身
+    out_resolved = str(out_root.resolve()).lower()
+    items = [it for it in items
+             if not str(Path(it["path"]).resolve()).lower().startswith(out_resolved)]
+
+    rows = []
+    pending = done = 0
+    for it in items:
+        name = Path(it["path"]).name
+        target = out_root / name
+        exists = target.is_file()
+        ow, oh = _img_size(target) if exists else (0, 0)
+        rows.append({
+            "path": it["path"], "name": name,
+            "width": it.get("width", 0), "height": it.get("height", 0),
+            "done": exists,
+            "out": str(target),
+            "out_width": ow, "out_height": oh,
+        })
+        if exists:
+            done += 1
+        else:
+            pending += 1
+
+    return {
+        "ok": True, "src_dir": str(src_root), "out_dir": str(out_root),
+        "total": len(rows), "pending": pending, "already": done,
+        "items": rows,
+    }
+
+
 @app.post("/api/upscale/start")
 def api_upscale_start(req: UpscaleRequest):
     with _up_lock:
@@ -321,17 +380,26 @@ def api_upscale_start(req: UpscaleRequest):
         if not ok:
             return JSONResponse({"error": msg}, status_code=400)
 
+        out_root = _up_out_dir(directory, req.out_dir)
         items = cap.scan_images(directory, req.recursive)
         if not items:
             return JSONResponse({"error": "目录里没有图片"}, status_code=400)
 
-        # 跳过已放大（_up 已存在 或 .orig 已存在）
+        # 递归时排除输出目录自身，避免把放大结果又扫回来
+        out_resolved = str(out_root.resolve()).lower()
+        items = [it for it in items
+                 if not str(Path(it["path"]).resolve()).lower().startswith(out_resolved)]
+
+        # 只处理指定文件（单张重试 / 重跑失败）
+        if req.only_paths:
+            want = {str(Path(x)) for x in req.only_paths}
+            items = [it for it in items if str(Path(it["path"])) in want]
+
         tasks = []
         skipped = 0
         for it in items:
-            p = Path(it["path"])
-            already = (p.stem.endswith("_up")) or Path(str(p) + ".orig").is_file()
-            if req.skip_existing and already:
+            target = out_root / Path(it["path"]).name
+            if req.skip_existing and target.is_file():
                 skipped += 1
                 continue
             tasks.append({"path": it["path"], "name": it["name"],
@@ -340,11 +408,13 @@ def api_upscale_start(req: UpscaleRequest):
                 break
 
         if not tasks:
-            return JSONResponse({"error": "没有需要放大的图片（都已处理过）"}, status_code=400)
+            return JSONResponse({"error": "没有需要放大的图片（目标文件都已存在）"},
+                                status_code=400)
 
         _up_batch.update({
             "running": True, "cancel": False, "directory": directory,
-            "mode": req.mode, "multiplier": req.multiplier, "sharpen": req.sharpen,
+            "out_dir": str(out_root),
+            "multiplier": req.multiplier, "sharpen": req.sharpen,
             "tasks": tasks, "started_at": time.time(), "finished_at": 0.0,
         })
 
@@ -368,8 +438,8 @@ def api_upscale_clear():
     with _up_lock:
         if _up_batch["running"]:
             return JSONResponse({"error": "先停止放大"}, status_code=409)
-        _up_batch.update({"tasks": [], "directory": "", "started_at": 0.0,
-                          "finished_at": 0.0, "cancel": False})
+        _up_batch.update({"tasks": [], "directory": "", "out_dir": "",
+                          "started_at": 0.0, "finished_at": 0.0, "cancel": False})
     return {"ok": True}
 
 
@@ -379,7 +449,7 @@ def api_upscale_batch():
         return {
             "running": _up_batch["running"],
             "directory": _up_batch["directory"],
-            "mode": _up_batch["mode"],
+            "out_dir": _up_batch["out_dir"],
             "multiplier": _up_batch["multiplier"],
             "stats": _up_stats(),
             "tasks": list(_up_batch["tasks"]),
