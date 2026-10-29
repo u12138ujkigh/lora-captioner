@@ -1,45 +1,32 @@
-# virtualenv & runtime artifacts
+# ---- Python / 虚拟环境 ----
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 
-# local state
+# ---- 运行时状态（本机数据，不进仓库）----
 last_config.json
-*.bak
-
-# test fixtures
-_test_*/
-_test*/
-
-# OS
-Thumbs.db
-desktop.ini
-.DS_Store
-
-_shots/
-*.bak-*
-
-
-# temp validation artifacts
-_c.js
-_vf*
-_probe*
-_onepass*
-_batchtest*
-_memtest*
-_updemo*
-_pickdemo*
-
-# runtime user config
 ui_config.json
-
-# local commit message scratch
-_commit_msg.txt
-
-# runtime state
 projects.json
 queue_state.json
 *_state.json
 
-# thumbnail cache.thumb_cache/
+# ---- 缓存 ----
+.thumb_cache/
+
+# ---- 备份 ----
+*.bak
+*.bak-*
+
+# ---- 临时脚本与产物（下划线开头的都是本地临时文件）----
+_*.py
+_*.js
+_*.txt
+_shots/
+_test_*/
+_test*/
+
+# ---- 系统文件 ----
+Thumbs.db
+desktop.ini
+.DS_Store
