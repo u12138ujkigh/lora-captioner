@@ -359,8 +359,38 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   overflow:hidden;background:#080b10;border:1px solid var(--rule);
   display:flex;align-items:center;justify-content:center;
 }
-.mnImgWrap img{width:100%;height:100%;object-fit:contain;display:none}
+.mnImgWrap{cursor:ew-resize;user-select:none}
+.mnImgWrap img{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:contain;display:none;pointer-events:none;-webkit-user-drag:none}
 .mnImgWrap img.show{display:block}
+/* 上层（原图）按滑块位置裁切 */
+.mnImgWrap #mnBefore{clip-path:inset(0 calc(100% - var(--mx,50%)) 0 0)}
+.mnLine{
+  position:absolute;top:0;bottom:0;left:var(--mx,50%);width:2px;margin-left:-1px;
+  background:var(--safe);box-shadow:0 0 8px var(--safe-glow);
+  pointer-events:none;display:none;
+}
+.mnImgWrap.has-compare .mnLine{display:block}
+.mnGrip{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:16px;height:16px;border-radius:50%;background:var(--safe);
+  border:2px solid #04121f;box-shadow:0 1px 6px rgba(0,0,0,.6);
+}
+.mnGrip::before,.mnGrip::after{
+  content:"";position:absolute;top:50%;transform:translateY(-50%);
+  border-top:3px solid transparent;border-bottom:3px solid transparent;
+}
+.mnGrip::before{left:2px;border-right:3px solid #04121f}
+.mnGrip::after{right:2px;border-left:3px solid #04121f}
+.mnTag{
+  position:absolute;top:4px;font-size:9px;line-height:14px;padding:0 5px;
+  border-radius:3px;background:rgba(12,17,24,.82);color:var(--text-dim);
+  pointer-events:none;display:none;
+}
+.mnTag.left{left:5px}
+.mnTag.right{right:5px;color:var(--safe-bright)}
+.mnImgWrap.has-compare .mnTag{display:block}
+.mnImgWrap:hover.has-compare{box-shadow:0 0 0 1px rgba(74,158,255,.35)}
 .mnPlaceholder{font-size:11.5px;color:var(--text-mute)}
 .mnName{font-size:11.5px;color:var(--text);
   font-family:"Cascadia Mono",Consolas,monospace;
@@ -739,8 +769,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <div class="monLeft">
       <div class="monNow">
         <div class="mnLabel">当前处理</div>
-        <div class="mnImgWrap" id="mnImgWrap">
-          <img id="mnImg" alt="">
+        <div class="mnImgWrap" id="mnImgWrap" title="鼠标左右滑动对比 · 点击全屏">
+          <img id="mnAfter" alt="放大后">
+          <img id="mnBefore" alt="原图">
+          <div class="mnLine" id="mnLine"><span class="mnGrip"></span></div>
+          <span class="mnTag left">原图</span>
+          <span class="mnTag right">放大后</span>
           <span class="mnPlaceholder" id="mnPlaceholder">等待中</span>
         </div>
         <div class="mnName" id="mnName">—</div>
@@ -1901,6 +1935,8 @@ $("#btnCancelAll").addEventListener("click",async()=>{
 /* ============ 实时监控面板 ============ */
 const mon = {
   open: false, timer: null, last: null,
+  // 当前预览图的状态（只在图变化时重查，避免每秒请求）
+  imgPath: "", imgSrc: "", imgUp: "", hasCompare: false, loading: false,
   rows: new Map(),      // path -> 已渲染的 DOM 行
   sig: new Map(),       // path -> 上次状态签名，用于跳过没变的行
   userScrolled: false,  // 用户手动滚动后不再自动跟随
@@ -1942,6 +1978,51 @@ async function refreshMonitor(){
   }catch(e){}
 }
 
+/* 设置监控预览图：只在路径变化时查详情，避免每秒请求 */
+async function mnSetImage(curPath){
+  if(mon.imgPath === curPath) return;      // 没换图，跳过
+  mon.imgPath = curPath;
+  mon.loading = true;
+  mon.hasCompare = false;
+  mon.imgSrc = curPath;
+  mon.imgUp = "";
+  $("#mnImgWrap").classList.remove("has-compare");
+  $("#mnBefore").classList.remove("show");
+
+  // 先用处理中的图撑住画面
+  const after = $("#mnAfter");
+  after.src = "/api/thumb?path=" + encodeURIComponent(curPath) + "&size=480";
+  after.classList.add("show");
+  $("#mnPlaceholder").hidden = true;
+
+  try{
+    const pj = activeProject();
+    const qs = new URLSearchParams({ path: curPath, project_id: pj ? pj.id : "" });
+    const info = await (await fetch("/api/item-status?" + qs)).json();
+    if(mon.imgPath !== curPath) return;    // 期间又换图了，丢弃结果
+
+    const srcPath = (info.src && info.src.exists) ? info.src.path : "";
+    const upPath = (info.upscaled && info.upscaled.exists) ? info.upscaled.path : "";
+
+    // 只有当「原图」和「放大图」是两个不同文件时才能对比
+    if(srcPath && upPath && srcPath !== upPath && srcPath !== curPath){
+      mon.imgSrc = srcPath;
+      mon.imgUp = upPath;
+      mon.hasCompare = true;
+      $("#mnBefore").src = "/api/thumb?path=" + encodeURIComponent(srcPath) + "&size=480";
+      $("#mnBefore").classList.add("show");
+      // 上面那张（原图）放在上层，按滑块裁切
+      $("#mnAfter").src = "/api/thumb?path=" + encodeURIComponent(upPath) + "&size=480";
+      $("#mnImgWrap").classList.add("has-compare");
+      $("#mnImgWrap").style.setProperty("--mx", "50%");
+    }
+  }catch(e){
+    // 查不到就只显示单图
+  }finally{
+    mon.loading = false;
+  }
+}
+
 function renderMonitor(d){
   const cur = d.current;
   const stageMap = {upscale:"放大", caption:"打标"};
@@ -1970,7 +2051,10 @@ function renderMonitor(d){
   }
 
   if(!cur){
-    $("#mnImg").classList.remove("show");
+    mon.imgPath = ""; mon.hasCompare = false; mon.imgSrc = ""; mon.imgUp = "";
+    $("#mnImgWrap").classList.remove("has-compare");
+    $("#mnAfter").classList.remove("show");
+    $("#mnBefore").classList.remove("show");
     $("#mnPlaceholder").hidden = false;
     $("#mnPlaceholder").textContent = "空闲";
     $("#mnName").textContent = "—";
@@ -1984,23 +2068,23 @@ function renderMonitor(d){
 
   const pr = cur.progress || {};
 
-  // 当前图
+  // 当前图（含对比）
   const curPath = pr.current_path || "";
   if(curPath){
-    const img = $("#mnImg");
-    const want = "/api/thumb?path=" + encodeURIComponent(curPath) + "&size=480";
-    if(img.dataset.path !== curPath){
-      img.dataset.path = curPath;
-      img.src = want;
-    }
-    img.classList.add("show");
-    $("#mnPlaceholder").hidden = true;
+    mnSetImage(curPath);
     $("#mnName").textContent = pr.current || curPath.split(/[\\/]/).pop();
     const item = (cur.items||[]).find(x=>x.path===curPath);
     const dims = item && item.src && item.src.length===2 ? `${item.src[0]}×${item.src[1]}` : "";
-    $("#mnMeta").textContent = dims ? `原图 ${dims}` : "";
+    let meta = dims ? `原图 ${dims}` : "";
+    if(mon.hasCompare && item && item.dst && item.dst.length===2){
+      meta += ` → ${item.dst[0]}×${item.dst[1]}`;
+    }
+    $("#mnMeta").textContent = meta;
   }else{
-    $("#mnImg").classList.remove("show");
+    mon.imgPath = ""; mon.hasCompare = false; mon.imgSrc = ""; mon.imgUp = "";
+    $("#mnImgWrap").classList.remove("has-compare");
+    $("#mnAfter").classList.remove("show");
+    $("#mnBefore").classList.remove("show");
     $("#mnPlaceholder").hidden = false;
     $("#mnPlaceholder").textContent = "准备中…";
     $("#mnName").textContent = "—";
@@ -2110,6 +2194,37 @@ $("#monList").addEventListener("scroll",()=>{
   // 距底部超过 60px 视为用户手动滚动
   mon.userScrolled = (box.scrollHeight - box.scrollTop - box.clientHeight) > 60;
 });
+
+/* 监控预览：滑动对比 + 点击全屏 */
+(function bindMnCompare(){
+  const wrap = $("#mnImgWrap");
+  if(!wrap) return;
+
+  const setX = e=>{
+    if(!mon.hasCompare) return;
+    const r = wrap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    wrap.style.setProperty("--mx", (x*100)+"%");
+  };
+  wrap.addEventListener("mousemove", setX);
+  wrap.addEventListener("mouseenter", setX);
+  wrap.addEventListener("mouseleave", ()=>{
+    if(mon.hasCompare) wrap.style.setProperty("--mx", "50%");
+  });
+  wrap.addEventListener("touchmove", e=>{
+    if(!mon.hasCompare || !e.touches.length) return;
+    const r = wrap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.touches[0].clientX - r.left)/r.width));
+    wrap.style.setProperty("--mx", (x*100)+"%");
+    e.preventDefault();
+  }, {passive:false});
+
+  // 点击 → 全屏（有对比就进对比模式）
+  wrap.addEventListener("click", ()=>{
+    const path = mon.imgPath || mon.imgSrc;
+    if(path) openLightbox(mon.imgSrc || path, mon.hasCompare);
+  });
+})();
 
 /* ============ 单张图详情 ============ */
 let _itemView = "upscaled";     // upscaled | original
