@@ -514,7 +514,13 @@ _executor.register("pipeline", _handle_pipeline)
 # --------------------------------------------------------------------------- #
 @app.get("/api/projects")
 def api_projects():
-    return {"projects": _projects.all(), "active_id": (_projects.active() or {}).get("id", "")}
+    allp = _projects.all()
+    return {
+        "projects": allp,
+        "active_id": (_projects.active() or {}).get("id", ""),
+        "archived_count": sum(1 for p in allp if p.get("archived")),
+        "alive_count": sum(1 for p in allp if not p.get("archived")),
+    }
 
 
 @app.post("/api/projects")
@@ -531,7 +537,11 @@ def api_project_create(req: dict):
 
 @app.patch("/api/projects/{pid}")
 def api_project_update(pid: str, req: dict):
-    p = _projects.update(pid, **req)
+    # archived 单独走校验，其余字段原样透传
+    if "archived" in req:
+        p = _projects.set_archived(pid, bool(req.pop("archived")))
+    else:
+        p = _projects.update(pid, **req)
     if not p:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
     return {"ok": True, "project": p}

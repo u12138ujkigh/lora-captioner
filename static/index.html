@@ -535,6 +535,35 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .cmpWrap{cursor:zoom-in}
 #previewImg{cursor:zoom-in}
 #previewImg.zoomed{max-height:none;cursor:zoom-in}
+
+.pcount{font-weight:400;color:var(--text-mute);font-size:11.5px;
+  font-variant-numeric:tabular-nums}
+#btnShowArchived.on{background:var(--paper-3);color:var(--safe-bright);
+  border-color:rgba(74,158,255,.4)}
+/* 归档的项目：淡化 + 虚线边 */
+.projItem.archived{opacity:.55}
+.projItem.archived:hover{opacity:.85}
+.projItem.archived.active{opacity:.9}
+.projItem.archived .nm{text-decoration:line-through;text-decoration-color:var(--text-mute)}
+/* 项内的归档按钮，悬停才显形 */
+.projItem .archBtn{
+  flex-shrink:0;width:20px;height:20px;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:3px;border:1px solid transparent;background:transparent;
+  color:var(--text-mute);font-size:11px;line-height:1;cursor:pointer;
+  opacity:0;transition:opacity .12s,color .12s,background-color .12s;
+}
+.projItem:hover .archBtn{opacity:1}
+.projItem .archBtn:hover{background:var(--paper-3);color:var(--safe-bright)}
+.projItem.archived .archBtn{opacity:.7}
+/* 分隔线：归档区 */
+.projDivider{
+  display:flex;align-items:center;gap:6px;padding:8px 9px 4px;
+  font-size:10.5px;color:var(--text-mute);
+}
+.projDivider::before,.projDivider::after{
+  content:"";flex:1;height:1px;background:var(--rule-soft);
+}
 </style>
 </head>
 <body>
@@ -559,8 +588,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <!-- 左：项目列表 -->
   <div id="projectPanel">
     <div class="panelHead">
-      <span class="t">项目</span>
-      <button class="btn small" id="btnNewProject">+ 新建</button>
+      <span class="t">项目 <span id="projCount" class="pcount"></span></span>
+      <span style="display:flex;gap:4px;align-items:center">
+        <button class="btn small ghost" id="btnShowArchived" title="显示/隐藏已归档的项目" hidden>归档 <span id="archCount"></span></button>
+        <button class="btn small" id="btnNewProject">+ 新建</button>
+      </span>
     </div>
     <div id="projectList"></div>
   </div>
@@ -868,6 +900,8 @@ const state = {
   bi: {}, biMode: "en", curAR: "auto", PICKED: new Set(),
   editing: false, savedCaption: "", providers: [],
   editingProject: null,   // 正在编辑的项目 id（null=新建）
+  showArchived: false,    // 是否显示已归档项目
+  archivedCount: 0, aliveCount: 0,
 };
 
 /* ============ 工具 ============ */
@@ -882,6 +916,8 @@ async function loadProjects(){
   const d = await (await fetch("/api/projects")).json();
   state.projects = d.projects || [];
   state.activeId = d.active_id || "";
+  state.archivedCount = d.archived_count || 0;
+  state.aliveCount = d.alive_count || (state.projects.length - state.archivedCount);
   renderProjects();
   updateActiveLabel();
 }
@@ -892,29 +928,106 @@ function activeProject(){
 
 function renderProjects(){
   const box=$("#projectList");
+  const alive = state.projects.filter(p=>!p.archived);
+  const arch  = state.projects.filter(p=>p.archived);
+
+  // 头部计数与归档开关
+  $("#projCount").textContent = alive.length ? `(${alive.length})` : "";
+  const btn = $("#btnShowArchived");
+  if(btn){
+    btn.hidden = arch.length === 0;
+    btn.classList.toggle("on", state.showArchived);
+    btn.title = state.showArchived ? "隐藏已归档的项目" : `显示 ${arch.length} 个已归档项目`;
+    const ac = $("#archCount");
+    if(ac) ac.textContent = arch.length ? `(${arch.length})` : "";
+  }
+
   if(!state.projects.length){
     box.innerHTML='<div class="projEmpty">还没有项目<br>点上方「+ 新建」开始</div>';
     return;
   }
-  box.innerHTML = state.projects.map(p=>{
-    const cls = p.id===state.activeId ? "active" : "";
+
+  const itemHtml = p => {
+    const cls = [
+      p.id===state.activeId ? "active" : "",
+      p.archived ? "archived" : "",
+    ].filter(Boolean).join(" ");
     const jobs = queuedForProject(p.id);
     const running = jobs.some(j=>j.status==="running");
     return `<div class="projItem ${cls} ${jobs.length?"has-queue":""} ${running?"running":""}"
-      data-id="${p.id}" title="${p.directory}">
+      data-id="${p.id}" title="${esc(p.directory)}">
       <span class="dot"></span>
       <span class="info">
         <span class="nm">${esc(p.name)}</span>
         <span class="path">${esc(p.directory)}</span>
       </span>
-      ${jobs.length?`<span class="cnth">${jobs.length} 队列</span>`:""}
+      ${jobs.length?`<span class="cnth">${jobs.length}</span>`:""}
+      <button class="archBtn" data-arch="${p.id}" data-to="${p.archived?0:1}"
+        title="${p.archived?"取消归档":"归档"}">${p.archived?"↩":"⌸"}</button>
     </div>`;
-  }).join("");
+  };
+
+  let html = alive.map(itemHtml).join("");
+  if(state.showArchived && arch.length){
+    html += `<div class="projDivider">已归档 ${arch.length}</div>`;
+    html += arch.map(itemHtml).join("");
+  }
+  if(!html){
+    html = '<div class="projEmpty">没有进行中的项目<br>点「归档」按钮可查看已归档的</div>';
+  }
+  box.innerHTML = html;
+
   $$("#projectList .projItem").forEach(el=>{
-    el.addEventListener("click",()=>switchProject(el.dataset.id));
-    el.addEventListener("dblclick",()=>openProjectModal(el.dataset.id));
+    el.addEventListener("click",e=>{
+      if(e.target.closest(".archBtn")) return;
+      switchProject(el.dataset.id);
+    });
+    el.addEventListener("dblclick",e=>{
+      if(e.target.closest(".archBtn")) return;
+      openProjectModal(el.dataset.id);
+    });
+  });
+  $$("#projectList .archBtn").forEach(b=>{
+    b.addEventListener("click",async e=>{
+      e.stopPropagation();
+      const pid = b.dataset.arch;
+      const to = b.dataset.to === "1";
+      await setArchived(pid, to);
+    });
   });
 }
+
+/* 归档 / 取消归档 */
+async function setArchived(pid, archived){
+  const p = state.projects.find(x=>x.id===pid);
+  const r = await (await fetch(`/api/projects/${pid}`,{
+    method:"PATCH", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({archived})
+  })).json();
+  if(r.error){ toast(r.error); return; }
+
+  await loadProjects();
+
+  // 归档的是当前项目 → 自动切到第一个未归档的
+  if(archived && state.activeId === pid){
+    const next = state.projects.find(x=>!x.archived);
+    if(next){
+      await switchProject(next.id);
+    }else{
+      state.activeId = "";
+      renderProjects(); updateActiveLabel(); await scanProject();
+    }
+  }
+  toast(archived ? "已归档" : "已取消归档");
+}
+
+$("#btnShowArchived").addEventListener("click",()=>{
+  state.showArchived = !state.showArchived;
+  renderProjects();
+  if(state.showArchived && state.archivedCount){
+    toast(`显示 ${state.archivedCount} 个已归档项目`);
+  }
+});
 
 function esc(s){ return String(s||"").replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c])); }
 

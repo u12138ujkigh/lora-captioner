@@ -84,11 +84,21 @@ class ProjectStore:
     # ---------- 查询 ----------
     def all(self) -> list[dict]:
         with _lock:
-            return list(self._data["projects"])
+            out = []
+            for p in self._data["projects"]:
+                q = dict(p)
+                q.setdefault("archived", False)
+                out.append(q)
+            return out
 
     def get(self, pid: str) -> Optional[dict]:
         with _lock:
-            return next((p for p in self._data["projects"] if p["id"] == pid), None)
+            p = next((x for x in self._data["projects"] if x["id"] == pid), None)
+            if p is None:
+                return None
+            q = dict(p)
+            q.setdefault("archived", False)
+            return q
 
     def active(self) -> Optional[dict]:
         with _lock:
@@ -97,7 +107,10 @@ class ProjectStore:
                 p = self.get(pid)
                 if p:
                     return p
-            return self._data["projects"][0] if self._data["projects"] else None
+            # 没指定或指定的不存在：优先挑未归档的
+            alive = [x for x in self.all() if not x.get("archived")]
+            pool = alive or self.all()
+            return pool[0] if pool else None
 
     def set_active(self, pid: str) -> bool:
         with _lock:
@@ -120,6 +133,7 @@ class ProjectStore:
                 "directory": str(src),
                 "out_dir": str(src.parent / (src.name + "_放大")),
                 "config": dict(DEFAULT_CONFIG, **(config or {})),
+                "archived": False,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -131,9 +145,13 @@ class ProjectStore:
 
     def update(self, pid: str, **fields) -> Optional[dict]:
         with _lock:
-            p = self.get(pid)
+            # 注意：必须取 _data 里的原始引用。
+            # get() 返回的是副本（为了给老数据补 archived 默认值），
+            # 改副本不会写回 _data，保存后就丢了。
+            p = next((x for x in self._data["projects"] if x["id"] == pid), None)
             if not p:
                 return None
+            p.setdefault("archived", False)
             if "config" in fields and isinstance(fields["config"], dict):
                 # 合并而不是替换，避免丢字段
                 p["config"] = dict(p.get("config") or {}, **fields.pop("config"))
@@ -148,6 +166,10 @@ class ProjectStore:
             p["updated_at"] = time.time()
             self._save()
             return p
+
+    def set_archived(self, pid: str, archived: bool) -> Optional[dict]:
+        """归档 / 取消归档。"""
+        return self.update(pid, archived=bool(archived))
 
     def delete(self, pid: str) -> bool:
         with _lock:
