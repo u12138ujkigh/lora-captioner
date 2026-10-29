@@ -1438,6 +1438,146 @@ def api_translate(req: TranslateRequest):
             "segments": segments, "engine": used, "error": err}
 
 
+def _file_info(fp: Path) -> dict:
+    """文件的基本信息（不存在时 exists=False）。"""
+    if not fp.is_file():
+        return {"path": str(fp), "exists": False}
+    try:
+        st = fp.stat()
+        w = h = 0
+        if fp.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            w, h = _img_size(fp)
+        return {"path": str(fp), "exists": True, "size": st.st_size,
+                "mtime": int(st.st_mtime), "width": w, "height": h}
+    except Exception as e:
+        return {"path": str(fp), "exists": False, "error": str(e)}
+
+
+@app.get("/api/item-status")
+def api_item_status(path: str, project_id: str = ""):
+    """单张图的完整状态：原图 / 放大 / 打标 / 本任务中的处理结果。
+
+    监控面板点开某一行时调用，回答「这张放大了没、打标了没」。
+
+    兼容两种视图：
+    - 传入源图 → 放大产物在 out_dir 同名，打标可能在源目录或放大目录
+    - 传入放大图 → 它自己就是放大产物，打标在同目录
+    """
+    target = Path(path)
+    if not target.is_file():
+        return JSONResponse({"error": f"文件不存在：{path}"}, status_code=404)
+
+    # ---- 定位项目与输出目录 ----
+    out_dir = ""
+    if project_id:
+        pj = _projects.get(project_id)
+        if pj:
+            out_dir = pj.get("out_dir") or ""
+            if not out_dir:
+                d = Path(pj["directory"])
+                out_dir = str(d.parent / (d.name + "_放大"))
+
+    out_root = Path(out_dir) if out_dir else None
+    in_out = False
+    if out_root:
+        try:
+            target.resolve().relative_to(out_root.resolve())
+            in_out = True
+        except Exception:
+            in_out = False
+
+    # ---- 判定「原图」和「放大图」两个角色 ----
+    if in_out:
+        # 传进来的是放大图：它自己是放大产物，原图在源目录同名
+        up_file = target
+        src_file = (out_root.parent / out_root.name.replace("_放大", "") / target.name)
+        if not src_file.is_file():
+            src_file = target
+    else:
+        src_file = target
+        up_file = (out_root / target.name) if out_root else None
+
+    uniq = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    up_is_image = up_file is not None and up_file.suffix.lower() in uniq
+
+    def info(fp):
+        if fp is None:
+            return {"path": "", "exists": False}
+        if not fp.is_file():
+            return {"path": str(fp), "exists": False}
+        try:
+            st = fp.stat()
+            w = h = 0
+            if fp.suffix.lower() in uniq:
+                w, h = _img_size(fp)
+            return {"path": str(fp), "exists": True, "size": st.st_size,
+                    "mtime": int(st.st_mtime), "width": w, "height": h}
+        except Exception as e:
+            return {"path": str(fp), "exists": False, "error": str(e)}
+
+    out = {"name": target.name, "path": str(target), "in_out_dir": in_out}
+    out["src"] = info(src_file)
+    out["upscaled"] = info(up_file if up_is_image else None)
+
+    # 覆盖模式：原图备份 .orig
+    bak = src_file.with_suffix(src_file.suffix + ".orig")
+    if bak.is_file():
+        out["upscaled"]["mode"] = "inplace"
+        out["backup"] = info(bak)
+    elif up_is_image and up_file is not None and up_file.is_file():
+        out["upscaled"]["mode"] = "newfile"
+
+    # ---- 打标产物：两处都找（源目录 + 放大目录） ----
+    candidates = []
+    for base in [src_file.with_suffix(".txt")]:
+        candidates.append(base)
+    if up_file is not None:
+        candidates.append(up_file.with_suffix(".txt"))
+
+    found = None
+    for cp in candidates:
+        if cp.is_file():
+            found = cp
+            break
+    if found is not None:
+        ci = info(found)
+        try:
+            ci["text"] = found.read_text(encoding="utf-8", errors="ignore").strip()
+            ci["words"] = len([w for w in ci["text"].split() if w.strip()])
+        except Exception:
+            ci["text"] = ""
+            ci["words"] = 0
+        out["caption"] = ci
+    else:
+        out["caption"] = {"path": str(candidates[0]) if candidates else "",
+                          "exists": False}
+
+    # ---- 本任务中的处理结果 ----
+    snap = _executor.snapshot()
+    jobs = [snap.get("current")] + list(snap.get("queue") or []) + list(snap.get("recent") or [])
+    for j in jobs:
+        if not j:
+            continue
+        det = _executor.get_job(j["id"])
+        if not det:
+            continue
+        for it in det.get("items", []):
+            if it.get("path") == str(target):
+                out["task"] = {
+                    "job_id": det["id"], "job_label": det.get("label", ""),
+                    "kind": det.get("kind", ""),
+                    "status": it.get("status", ""),
+                    "duration_ms": it.get("duration_ms", 0),
+                    "error": it.get("error", ""),
+                    "stage": (det.get("progress") or {}).get("stage", ""),
+                }
+                break
+        if "task" in out:
+            break
+
+    return out
+
+
 @app.get("/api/upscale/original")
 def api_upscale_original(path: str):
     """返回某张图对应的「放大前原图」，用于对比查看。

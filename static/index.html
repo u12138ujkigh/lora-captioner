@@ -405,6 +405,61 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   font-variant-numeric:tabular-nums;min-width:44px;text-align:right}
 .monItem .serr{font-size:10.5px;color:var(--fail);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:180px}
+
+/* ---------- 单张图详情 ---------- */
+.itemWrap{display:flex;gap:0;min-height:340px}
+.itemLeft{width:330px;flex-shrink:0;border-right:1px solid var(--rule);
+  background:#080b10;display:flex;flex-direction:column}
+.itemLeft .ilImgWrap{
+  position:relative;flex:1;min-height:280px;
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.itemLeft img{max-width:100%;max-height:420px;object-fit:contain;display:none}
+.itemLeft img.show{display:block}
+.itemLeft .ilEmpty{color:var(--text-mute);font-size:12px}
+.itemLeft .ilSwitch{
+  display:flex;gap:2px;padding:6px;border-top:1px solid var(--rule);
+  background:var(--paper);flex-shrink:0;
+}
+.itemLeft .ilSwitch button{
+  flex:1;padding:4px;border-radius:3px;border:1px solid transparent;
+  background:transparent;color:var(--text-mute);font-family:inherit;
+  font-size:11.5px;cursor:pointer;
+}
+.itemLeft .ilSwitch button:hover{background:var(--paper-2);color:var(--text)}
+.itemLeft .ilSwitch button.active{
+  background:var(--safe-wash);border-color:rgba(74,158,255,.4);color:var(--safe-bright);
+}
+.itemRight{flex:1;min-width:0;padding:12px 14px;overflow-y:auto;
+  display:flex;flex-direction:column;gap:11px}
+.stBlock{border:1px solid var(--rule);border-radius:var(--r-sm);overflow:hidden}
+.stBlock > .sbHead{
+  display:flex;align-items:center;gap:7px;padding:7px 10px;
+  background:var(--paper-2);font-size:12px;font-weight:600;
+}
+.stBlock > .sbHead .mark{
+  width:15px;height:15px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:900;line-height:1;
+}
+.stBlock.yes > .sbHead .mark{background:var(--done);color:#04121f}
+.stBlock.no > .sbHead .mark{background:var(--rule);color:var(--text-mute)}
+.stBlock.bad > .sbHead .mark{background:var(--fail);color:#fff}
+.stBlock .sbBody{padding:8px 10px;font-size:11.5px;line-height:1.7;
+  display:flex;flex-direction:column;gap:4px}
+.kv{display:flex;gap:8px}
+.kv .k{color:var(--text-mute);flex-shrink:0;min-width:64px}
+.kv .v{color:var(--text-dim);word-break:break-all;
+  font-family:"Cascadia Mono",Consolas,monospace;font-size:11px}
+.kv .v.num{font-variant-numeric:tabular-nums}
+.itemCapText{
+  margin-top:4px;padding:7px 9px;border-radius:var(--r-sm);
+  background:var(--paper-2);border:1px solid var(--rule-soft);
+  color:var(--text);line-height:1.6;font-size:11.5px;
+  max-height:150px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+}
+.itemErrText{color:var(--fail);font-size:11.5px;line-height:1.6;
+  padding:6px 8px;border-radius:var(--r-sm);background:rgba(247,109,109,.1)}
 </style>
 </head>
 <body>
@@ -521,6 +576,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
   <button class="btn small" id="btnMonitor" title="展开实时监控面板">监控 ▲</button>
+</div>
+
+<!-- 单张图详情 -->
+<div id="itemModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:820px">
+    <div class="modalHead">
+      <span id="itemTitle">图片详情</span>
+      <button class="btn small ghost" id="btnCloseItem">✕</button>
+    </div>
+    <div class="modalScroll" id="itemBody" style="padding:0"></div>
+  </div>
 </div>
 
 <!-- 实时监控面板 -->
@@ -1618,6 +1684,12 @@ function renderMonitorTail(d){
     }
     if(mon.sig.get(it.path) === sig) return;   // 没变化就跳过
     mon.sig.set(it.path, sig);
+    row.style.cursor = "pointer";
+    row.title = "点击查看详情";
+    if(!row.dataset.bound){
+      row.dataset.bound = "1";
+      row.addEventListener("click",()=>openItemDetail(it.path));
+    }
 
     row.className = "monItem " + it.status + (it.path===curPath?" cur":"");
     row.querySelector(".sname").textContent = it.name;
@@ -1650,6 +1722,139 @@ $("#monList").addEventListener("scroll",()=>{
   // 距底部超过 60px 视为用户手动滚动
   mon.userScrolled = (box.scrollHeight - box.scrollTop - box.clientHeight) > 60;
 });
+
+/* ============ 单张图详情 ============ */
+let _itemView = "upscaled";     // upscaled | original
+let _itemData = null;
+
+async function openItemDetail(path){
+  const pj = activeProject();
+  $("#itemModal").classList.add("show");
+  $("#itemTitle").textContent = path.split(/[\\/]/).pop();
+  $("#itemBody").innerHTML = '<div class="empty-hint" style="padding:40px"><strong>读取中…</strong></div>';
+  try{
+    const qs = new URLSearchParams({path, project_id: pj?pj.id:""});
+    const d = await (await fetch("/api/item-status?"+qs)).json();
+    if(d.error){ $("#itemBody").innerHTML = `<div class="empty-hint" style="padding:30px"><strong>读取失败</strong><span>${esc(d.error)}</span></div>`; return; }
+    _itemData = d;
+    // 优先显示放大图，没有就显示原图
+    _itemView = (d.upscaled && d.upscaled.exists) ? "upscaled" : "original";
+    renderItemDetail();
+  }catch(e){
+    $("#itemBody").innerHTML = `<div class="empty-hint" style="padding:30px"><strong>读取失败</strong><span>${esc(e.message)}</span></div>`;
+  }
+}
+
+function fmtSize(b){
+  if(b === undefined || b === null) return "—";
+  if(b > 1048576) return (b/1048576).toFixed(2)+" MB";
+  if(b > 1024) return (b/1024).toFixed(0)+" KB";
+  return b+" B";
+}
+function fmtTime(ts){
+  if(!ts) return "—";
+  return new Date(ts*1000).toLocaleString("zh-CN",{hour12:false});
+}
+
+function renderItemDetail(){
+  const d = _itemData; if(!d) return;
+  const up = d.upscaled || {};
+  const cap = d.caption || {};
+  const src = d.src || {};
+  const task = d.task;
+
+  // 左侧图
+  const imgPath = _itemView==="upscaled"
+    ? (up.exists ? up.path : src.path)
+    : src.path;
+  const left = `
+    <div class="itemLeft">
+      <div class="ilImgWrap">
+        <img id="itemImg" src="/api/image?path=${encodeURIComponent(imgPath)}" alt="">
+      </div>
+      <div class="ilSwitch">
+        <button data-v="original" class="${_itemView==="original"?"active":""}">原图</button>
+        <button data-v="upscaled" class="${_itemView==="upscaled"?"active":""}" ${up.exists?"":"disabled style=opacity:.4"}>放大后</button>
+      </div>
+    </div>`;
+
+  // 右侧：三块状态
+  const dimOf = o => (o && o.width) ? `${o.width}×${o.height}` : "—";
+
+  const srcBlock = `
+    <div class="stBlock yes">
+      <div class="sbHead"><span class="mark">✓</span><span>原图</span></div>
+      <div class="sbBody">
+        <div class="kv"><span class="k">文件名</span><span class="v">${esc(d.name)}</span></div>
+        <div class="kv"><span class="k">尺寸</span><span class="v num">${dimOf(src)}</span></div>
+        <div class="kv"><span class="k">大小</span><span class="v num">${fmtSize(src.size)}</span></div>
+        <div class="kv"><span class="k">路径</span><span class="v">${esc(src.path||"")}</span></div>
+      </div>
+    </div>`;
+
+  const upBlock = up.exists ? `
+    <div class="stBlock yes">
+      <div class="sbHead"><span class="mark">✓</span><span>已放大</span>
+        <span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text-mute)">
+          ${up.mode==="inplace"?"覆盖原图（已备份 .orig）":"另存为新文件"}</span></div>
+      <div class="sbBody">
+        <div class="kv"><span class="k">放大尺寸</span><span class="v num">${dimOf(up)}</span></div>
+        <div class="kv"><span class="k">倍数</span><span class="v num">${
+          src.width&&up.width ? (up.width/src.width).toFixed(1)+"×" : "—"}</span></div>
+        <div class="kv"><span class="k">大小</span><span class="v num">${fmtSize(up.size)}</span></div>
+        <div class="kv"><span class="k">输出路径</span><span class="v">${esc(up.path||"")}</span></div>
+      </div>
+    </div>` : `
+    <div class="stBlock no">
+      <div class="sbHead"><span class="mark">–</span><span>未放大</span></div>
+      <div class="sbBody"><div class="kv"><span class="v">这个目录下还没有这张图的放大结果</span></div></div>
+    </div>`;
+
+  const capBlock = cap.exists ? `
+    <div class="stBlock yes">
+      <div class="sbHead"><span class="mark">✓</span><span>已打标</span>
+        <span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text-mute)">${cap.words||0} 词</span></div>
+      <div class="sbBody">
+        <div class="kv"><span class="k">caption</span></div>
+        <div class="itemCapText">${esc(cap.text||"")}</div>
+        <div class="kv"><span class="k">文件</span><span class="v">${esc(cap.path||"")}</span></div>
+      </div>
+    </div>` : `
+    <div class="stBlock no">
+      <div class="sbHead"><span class="mark">–</span><span>未打标</span></div>
+      <div class="sbBody"><div class="kv"><span class="v">还没有对应的 .txt 文件</span></div></div>
+    </div>`;
+
+  const taskBlock = task ? `
+    <div class="stBlock ${task.status==="error"?"bad":"yes"}">
+      <div class="sbHead"><span class="mark">${task.status==="error"?"!":"i"}</span>
+        <span>本次任务</span>
+        <span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text-mute)">
+          ${task.job_label||""}</span></div>
+      <div class="sbBody">
+        <div class="kv"><span class="k">状态</span><span class="v">${
+          {pending:"等待中",running:"处理中",done:"已完成",error:"失败"}[task.status]||task.status}</span></div>
+        ${task.duration_ms?`<div class="kv"><span class="k">耗时</span><span class="v num">${(task.duration_ms/1000).toFixed(1)}s</span></div>`:""}
+        ${task.error?`<div class="itemErrText">${esc(task.error)}</div>`:""}
+      </div>
+    </div>` : "";
+
+  $("#itemBody").innerHTML = `
+    <div class="itemWrap">
+      ${left}
+      <div class="itemRight">
+        ${srcBlock}${upBlock}${capBlock}${taskBlock}
+      </div>
+    </div>`;
+
+  $$("#itemBody .ilSwitch button").forEach(b=>{
+    if(b.disabled) return;
+    b.addEventListener("click",()=>{ _itemView=b.dataset.v; renderItemDetail(); });
+  });
+}
+
+$("#btnCloseItem").addEventListener("click",()=>$("#itemModal").classList.remove("show"));
+$("#itemModal").addEventListener("click",e=>{ if(e.target.id==="itemModal") e.target.classList.remove("show"); });
 
 /* ============ 运行动作 ============ */
 async function runAction(action){
