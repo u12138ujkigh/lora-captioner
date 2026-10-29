@@ -6,7 +6,8 @@
   放大、打标、全流程都排进同一个队列，不可能再出现
   「全流程在跑又点放大」导致 ComfyUI 被两拨任务争抢。
 - 每个任务是一个 Job，带自己的进度与取消标志。
-- 队列可持久化，重启后恢复未完成任务。
+- 队列可持久化。重启后恢复的任务进入 paused，不会自动开跑，
+  必须由用户确认再继续——否则一个早就跑完的项目每次启动都会重跑一遍。
 """
 from __future__ import annotations
 
@@ -183,9 +184,9 @@ class Executor:
     def cancel(self, job_id: str) -> bool:
         with self._lock:
             for j in self._queue:
-                if j.id == job_id and j.status in ("pending", "running"):
+                if j.id == job_id and j.status in ("pending", "running", "paused"):
                     j.cancel_requested = True
-                    if j.status == "pending":
+                    if j.status in ("pending", "paused"):
                         j.status = "cancelled"
                     self._wake.set()
                     return True
@@ -194,15 +195,54 @@ class Executor:
     def cancel_all(self) -> None:
         with self._lock:
             for j in self._queue:
-                if j.status in ("pending", "running"):
+                if j.status in ("pending", "running", "paused"):
                     j.cancel_requested = True
-                    if j.status == "pending":
+                    if j.status in ("pending", "paused"):
                         j.status = "cancelled"
 
     def clear_finished(self) -> None:
         with self._lock:
             self._queue = [j for j in self._queue
-                           if j.status in ("pending", "running")]
+                           if j.status in ("pending", "running", "paused")]
+
+    # ---------- 暂停中的任务（从磁盘恢复的） ----------
+    def resume(self, job_id: str) -> bool:
+        """把一个 paused 任务放回队列开始执行。"""
+        with self._lock:
+            j = next((x for x in self._queue
+                      if x.id == job_id and x.status == "paused"), None)
+            if j is None:
+                return False
+            j.status = "pending"
+            j.cancel_requested = False
+        self._wake.set()
+        self._emit({"type": "job_queued", "job": j.to_dict()})
+        return True
+
+    def resume_all(self) -> int:
+        """恢复所有 paused 任务。返回恢复数量。"""
+        with self._lock:
+            n = 0
+            for j in self._queue:
+                if j.status == "paused":
+                    j.status = "pending"
+                    j.cancel_requested = False
+                    n += 1
+        if n:
+            self._wake.set()
+        return n
+
+    def discard_paused(self) -> int:
+        """丢弃所有 paused 任务（用户不想要了）。"""
+        with self._lock:
+            keep, n = [], 0
+            for j in self._queue:
+                if j.status == "paused":
+                    n += 1
+                else:
+                    keep.append(j)
+            self._queue = keep
+        return n
 
     def set_progress(self, job: Job, **kw) -> None:
         """更新任务进度并广播。"""
@@ -218,8 +258,10 @@ class Executor:
                 "current": self._current.to_dict() if self._current else None,
                 "queue": [j.to_dict() for j in self._queue
                           if j.status in ("pending", "running")],
+                "paused": [j.to_dict() for j in self._queue
+                           if j.status == "paused"],
                 "recent": [j.to_dict() for j in self._queue
-                           if j.status not in ("pending", "running")][-10:],
+                           if j.status not in ("pending", "running", "paused")][-10:],
                 "busy": self._current is not None,
             }
 
@@ -251,8 +293,10 @@ class Executor:
                 "current": None,
                 "queue": [j.to_dict() for j in self._queue
                           if j.status == "pending"],
+                "paused": [j.to_dict() for j in self._queue
+                           if j.status == "paused"],
                 "recent": [j.to_dict() for j in self._queue
-                           if j.status not in ("pending", "running")][-5:],
+                           if j.status not in ("pending", "running", "paused")][-5:],
             }
             if cur:
                 d = cur.to_dict()
@@ -277,7 +321,12 @@ def save_queue(executor: Executor, path: Path) -> None:
 
 
 def load_queue(executor: Executor, path: Path) -> int:
-    """恢复队列（只恢复 pending 的）。返回恢复数量。"""
+    """恢复队列。恢复的任务一律置为 paused，等用户确认后才跑。
+
+    不直接恢复成 pending 的原因：一个提交后没来得及开始的放大任务，
+    如果每次启动都自动接着跑，配合 skip_existing=false 就会把整个
+    目录反复重跑。交给用户点一下更安全。
+    """
     if not path.is_file():
         return 0
     try:
@@ -286,15 +335,22 @@ def load_queue(executor: Executor, path: Path) -> int:
         return 0
     n = 0
     for item in data.get("queue", []):
-        if item.get("status") != "pending":
+        # pending = 排到了但没开始；running = 跑到一半进程没了。
+        # 两种都恢复成 paused，等用户决定。running 的重跑是安全的：
+        # 放大是覆盖写，打标有 skip_existing 跳过已完成的。
+        st = item.get("status")
+        if st not in ("pending", "running"):
             continue
         try:
+            label = item.get("label", "")
+            if st == "running":
+                label = f"{label}（上次中断）"
             job = Job(
                 id=item["id"], kind=item["kind"],
                 project_id=item.get("project_id", ""),
-                label=item.get("label", ""),
+                label=label,
                 params=item.get("params", {}),
-                status="pending",
+                status="paused",
                 created_at=item.get("created_at", time.time()),
             )
             with executor._lock:

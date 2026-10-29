@@ -616,6 +616,27 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 }
 .cmpWrap:hover .zoomTag,#mnImgWrap:hover .zoomTag,.lbCompare:hover .zoomTag{opacity:1}
 .zoomTag.on{opacity:1}
+
+/* 待恢复任务提示条 */
+.resumeBar{
+  display:flex;align-items:center;gap:9px;padding:7px 12px;flex-shrink:0;
+  background:rgba(167,139,250,.12);border-bottom:1px solid rgba(167,139,250,.3);
+  font-size:12px;color:var(--text);
+}
+.resumeBar .rbIcon{
+  width:18px;height:18px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--sys);color:#0c1118;font-size:11px;font-weight:900;
+}
+.resumeBar .rbText{color:var(--text-dim)}
+.resumeBar .rbText b{color:var(--sys);font-weight:600}
+/* 队列条上的待恢复标记 */
+#queueBar .qpaused{
+  font-size:11px;padding:1px 7px;border-radius:999px;white-space:nowrap;
+  background:rgba(167,139,250,.16);color:var(--sys);
+  border:1px solid rgba(167,139,250,.4);cursor:pointer;
+}
+#queueBar .qpaused:hover{background:rgba(167,139,250,.26)}
 </style>
 </head>
 <body>
@@ -733,6 +754,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   </div>
   <div class="qbar"><div class="qfill" id="qFill"></div></div>
   <span class="qwait" id="qWait"></span>
+  <span class="qpaused" id="qPaused" hidden></span>
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
   <button class="btn small" id="btnMonitor" title="展开实时监控面板">监控 ▲</button>
@@ -788,6 +810,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
     <span class="mhStat" id="monStat"></span>
     <button class="btn small ghost" id="btnMonCancel" hidden>取消任务</button>
     <button class="btn small ghost" id="btnMonClose">收起 ▼</button>
+  </div>
+  <div class="resumeBar" id="resumeBar" hidden>
+    <span class="rbIcon">⏸</span>
+    <span class="rbText" id="resumeText"></span>
+    <span class="spacer"></span>
+    <button class="btn small primary" id="btnResumeAll">恢复全部</button>
+    <button class="btn small ghost" id="btnDiscardPaused">丢弃</button>
   </div>
   <div class="monBody">
     <div class="monLeft">
@@ -1930,7 +1959,7 @@ ${p.directory}
 });
 
 /* ============ 执行器 / 队列条 ============ */
-state.executor = {current:null, queue:[], recent:[]};
+state.executor = {current:null, queue:[], paused:[], recent:[]};
 
 async function pollExecutor(){
   try{
@@ -1948,8 +1977,18 @@ function renderQueueBar(){
   const pend=(d.queue||[]).filter(j=>j.status==="pending");
   const recent=(d.recent||[]).filter(j=>j.status==="error").slice(-1)[0];
 
+  const paused = d.paused || [];
+  const qp = $("#qPaused");
+  if(qp){
+    qp.hidden = paused.length === 0;
+    qp.textContent = `${paused.length} 个待恢复`;
+    qp.title = "上次退出时留下的任务，点击查看并决定是否继续";
+  }
   bar.classList.toggle("busy",!!cur);
-  $("#qLabel").textContent = cur ? cur.label : (pend.length?`${pend.length} 个任务等待`:"空闲");
+  $("#qLabel").textContent = cur
+    ? cur.label
+    : (pend.length ? `${pend.length} 个任务等待`
+       : (paused.length ? "有任务待恢复" : "空闲"));
   let prog="";
   if(cur && cur.progress && cur.progress.total){
     const pr=cur.progress;
@@ -2009,6 +2048,23 @@ function toggleMonitor(force){
 }
 
 $("#btnMonitor").addEventListener("click",()=>toggleMonitor());
+
+/* 待恢复任务：恢复全部 / 丢弃 */
+$("#btnResumeAll").addEventListener("click",async()=>{
+  const r = await (await fetch("/api/executor/resume_all",{method:"POST"})).json();
+  toast(r.resumed ? `已恢复 ${r.resumed} 个任务` : "没有可恢复的任务");
+  pollExecutor(); refreshMonitor();
+});
+$("#btnDiscardPaused").addEventListener("click",async()=>{
+  const d = state.executor || {};
+  const n = (d.paused||[]).length;
+  if(!confirm(`丢弃 ${n} 个待恢复任务？\n\n只是不再执行，已经处理好的图不受影响。`)) return;
+  const r = await (await fetch("/api/executor/discard_paused",{method:"POST"})).json();
+  toast(r.discarded ? `已丢弃 ${r.discarded} 个任务` : "没有可丢弃的任务");
+  pollExecutor(); refreshMonitor();
+});
+/* 队列条上的标记点一下展开监控 */
+$("#qPaused").addEventListener("click",()=>toggleMonitor(true));
 $("#btnMonClose").addEventListener("click",()=>toggleMonitor(false));
 $("#monOnlyIssue").addEventListener("change",()=>{ mon.sig.clear(); renderMonitorTail(mon.last); });
 
@@ -2073,6 +2129,20 @@ function renderMonitor(d){
   const cur = d.current;
   const stageMap = {upscale:"放大", caption:"打标"};
 
+  // 待恢复任务
+  const paused = d.paused || [];
+  const rb = $("#resumeBar");
+  if(rb){
+    rb.hidden = paused.length === 0;
+    if(paused.length){
+      const first = paused[0];
+      const more = paused.length > 1 ? ` 等 ${paused.length} 个` : "";
+      $("#resumeText").innerHTML =
+        `上次退出时有任务没跑完：<b>${esc(first.label || first.kind)}</b>${more}`
+        + `　继续还是丢弃？`;
+    }
+  }
+
   // 顶部
   if(cur){
     $("#monTitle").textContent = cur.label;
@@ -2106,8 +2176,14 @@ function renderMonitor(d){
     $("#mnName").textContent = "—";
     $("#mnMeta").textContent = "";
     $("#monStats").innerHTML = "";
-    $("#monList").innerHTML = '<div class="empty-hint" style="padding:26px">'
-      + '<strong>没有正在跑的任务</strong><span>在项目上点「放大」「打标」或「全流程」</span></div>';
+    if(paused.length){
+      $("#monList").innerHTML = `<div class="empty-hint" style="padding:26px">
+        <strong>${paused.length} 个任务等待决定</strong>
+        <span>点上方「恢复全部」继续，或「丢弃」清掉</span></div>`;
+    }else{
+      $("#monList").innerHTML = '<div class="empty-hint" style="padding:26px">'
+        + '<strong>没有正在跑的任务</strong><span>在项目上点「放大」「打标」或「全流程」</span></div>';
+    }
     mon.rows.clear(); mon.sig.clear();
     return;
   }

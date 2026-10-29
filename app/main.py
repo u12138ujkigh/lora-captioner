@@ -622,6 +622,27 @@ def api_executor_job(job_id: str):
     return d
 
 
+@app.post("/api/executor/resume/{job_id}")
+def api_executor_resume(job_id: str):
+    """恢复一个暂停中的任务（从上次退出时留下的）。"""
+    ok = _executor.resume(job_id)
+    if not ok:
+        return JSONResponse({"error": "任务不存在或不在暂停状态"}, status_code=404)
+    return {"ok": True}
+
+
+@app.post("/api/executor/resume_all")
+def api_executor_resume_all():
+    n = _executor.resume_all()
+    return {"ok": True, "resumed": n}
+
+
+@app.post("/api/executor/discard_paused")
+def api_executor_discard_paused():
+    n = _executor.discard_paused()
+    return {"ok": True, "discarded": n}
+
+
 @app.post("/api/executor/cancel/{job_id}")
 def api_executor_cancel(job_id: str):
     ok = _executor.cancel(job_id)
@@ -1975,11 +1996,12 @@ def _bootstrap() -> None:
     except Exception as e:
         print(f"[bootstrap] 迁移失败（忽略）：{e}")
 
-    # 2) 恢复未完成的队列
+    # 2) 恢复未完成的队列（恢复成暂停态，不自动跑）
     try:
         n = ex.load_queue(_executor, _QUEUE_FILE)
         if n:
-            print(f"[bootstrap] 恢复 {n} 个待执行任务")
+            print(f"[bootstrap] 发现 {n} 个上次未完成的任务，已暂停。")
+            print(f"[bootstrap] 在界面底部点击，或在监控面板里选择恢复/丢弃。")
     except Exception as e:
         print(f"[bootstrap] 队列恢复失败（忽略）：{e}")
 
