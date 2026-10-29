@@ -303,6 +303,34 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   #left-w{--left-w:210px}
   #rightPanel{width:300px}
 }
+
+.selTools{display:inline-flex;align-items:center;gap:4px;
+  padding-left:6px;border-left:1px solid var(--rule)}
+.selCnt{font-size:11px;color:var(--safe-bright);font-weight:600;
+  font-variant-numeric:tabular-nums;padding:0 4px;white-space:nowrap}
+.selCnt.zero{color:var(--text-mute);font-weight:400}
+
+.auditGroup{border:1px solid var(--rule);border-radius:var(--r-sm);margin-bottom:8px;overflow:hidden}
+.agHead{display:flex;align-items:center;justify-content:space-between;padding:8px 11px;
+  background:var(--paper-2);cursor:pointer;font-size:12.5px;font-weight:600}
+.agHead .cnt{color:var(--fail);font-weight:700;font-size:11.5px}
+.agHead .arrow{color:var(--text-mute);font-size:9px;transition:transform .15s}
+.auditGroup.open .agHead .arrow{transform:rotate(90deg)}
+.auditFiles{display:none}
+.auditGroup.open .auditFiles{display:block}
+.auditFile{display:flex;gap:8px;padding:6px 11px;border-top:1px solid var(--rule-soft);
+  font-size:11.5px;align-items:flex-start}
+.auditFile .an{color:var(--safe-bright);cursor:pointer;flex-shrink:0;max-width:160px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:"Cascadia Mono",monospace;font-size:11px}
+.auditFile .ac{color:var(--text-mute);flex:1;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.5}
+.repHit{border:1px solid var(--rule-soft);border-radius:var(--r-sm);padding:7px 9px;
+  margin-bottom:5px;font-size:11.5px;background:var(--paper-2)}
+.repHit .rn{color:var(--safe-bright);font-weight:600;margin-bottom:4px;
+  font-family:"Cascadia Mono",monospace;font-size:11px}
+.repHit .rb{color:var(--fail);text-decoration:line-through;opacity:.8;word-break:break-word}
+.repHit .ra{color:var(--done);word-break:break-word}
 </style>
 </head>
 <body>
@@ -317,6 +345,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <button class="btn primary" id="btnRunPipeline">全流程</button>
   <button class="btn" id="btnRunUpscale">放大</button>
   <button class="btn" id="btnRunCaption">打标</button>
+  <button class="btn ghost small" id="btnAudit" title="质检当前目录的 caption">质检</button>
+  <button class="btn ghost small" id="btnReplace" title="批量查找替换 caption">替换</button>
+  <button class="btn ghost small" id="btnRename" title="把当前项目目录改名为 名字_张数">改名</button>
   <button class="btn ghost small" id="btnSaveCfg" title="保存当前项目配置">保存设置</button>
 </div>
 
@@ -348,6 +379,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
         <button class="fbtn" data-f="done">已打标<span class="n"></span></button>
         <button class="fbtn" data-f="error">失败<span class="n"></span></button>
       </div>
+      <span class="selTools" id="selTools" hidden>
+        <span class="selCnt" id="selCnt">已选 0</span>
+        <button class="btn small ghost" id="btnSelAll">全选</button>
+        <button class="btn small ghost" id="btnSelNone">清除</button>
+      </span>
       <button class="btn small ghost" id="btnRescan">刷新</button>
     </div>
     <div id="fileGrid"><div class="empty-hint">
@@ -410,6 +446,41 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <span class="qwait" id="qWait"></span>
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
+</div>
+
+<!-- 质检 -->
+<div id="auditModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:760px">
+    <div class="modalHead">
+      <span>质检报告 <span id="auditSub" style="font-weight:400;font-size:11.5px;color:var(--text-mute)"></span></span>
+      <button class="btn small ghost" id="btnCloseAudit">✕</button>
+    </div>
+    <div class="modalScroll" id="auditBody"></div>
+  </div>
+</div>
+
+<!-- 替换 -->
+<div id="replaceModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:620px">
+    <div class="modalHead">
+      <span>批量查找替换</span>
+      <button class="btn small ghost" id="btnCloseReplace">✕</button>
+    </div>
+    <div class="modalScroll">
+      <div class="fieldRow">
+        <div class="field"><label for="repFind">查找</label><input type="text" id="repFind" placeholder="误写的词"></div>
+        <div class="field"><label for="repWith">替换为</label><input type="text" id="repWith" placeholder="留空=删除"></div>
+      </div>
+      <label class="switchRow"><span>全词匹配</span><input type="checkbox" id="repWhole"></label>
+      <label class="switchRow"><span>区分大小写</span><input type="checkbox" id="repCase"></label>
+      <label class="switchRow"><span>替换前备份 .bak</span><input type="checkbox" id="repBackup" checked></label>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn" id="btnRepPreview">预览</button>
+        <button class="btn danger" id="btnRepApply" disabled>确认替换</button>
+      </div>
+      <div id="repResult" style="max-height:280px;overflow-y:auto;margin-top:8px"></div>
+    </div>
+  </div>
 </div>
 
 <!-- 新建/编辑项目 -->
@@ -477,6 +548,24 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
         <label for="projTrigger">触发词</label>
         <input type="text" id="projTrigger" placeholder="可留空" autocomplete="off">
       </div>
+      <div class="field">
+        <label for="projPerson">人物名字（用于文件夹命名，不进 caption）</label>
+        <input type="text" id="projPerson" placeholder="如 Yanni" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="projGeneric">泛化主体（caption 开头）</label>
+        <input type="text" id="projGeneric" placeholder="a young East Asian woman" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="projStyleHint">风格倾向提示</label>
+        <textarea id="projStyleHint" rows="2" placeholder="可选。如：偏写实摄影、柔光室内"></textarea>
+      </div>
+      <div class="field">
+        <label for="projExtra">附加指令</label>
+        <textarea id="projExtra" rows="2" placeholder="可选。如：强调手部姿态"></textarea>
+      </div>
+      <label class="switchRow"><span>文件名构图联动（_head/_half/_full）</span><input type="checkbox" id="projShotTags" checked></label>
+      <label class="switchRow"><span>批次完成后自动改名</span><input type="checkbox" id="projAutoRename"></label>
       <label class="switchRow"><span>递归子目录</span><input type="checkbox" id="projRecursive"></label>
       <label class="switchRow"><span>跳过已有 caption</span><input type="checkbox" id="projSkip" checked></label>
       <label class="switchRow"><span>放大后锐化</span><input type="checkbox" id="projSharpen"></label>
@@ -497,7 +586,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 
 const state = {
   projects: [], activeId: "", files: [], selected: null, filter: "all",
-  bi: {}, biMode: "en", curAR: "auto", picked: new Set(),
+  bi: {}, biMode: "en", curAR: "auto", PICKED: new Set(),
   editing: false, savedCaption: "", providers: [],
   editingProject: null,   // 正在编辑的项目 id（null=新建）
 };
@@ -558,9 +647,10 @@ async function switchProject(pid){
   if(state.activeId===pid) return;
   await fetch(`/api/projects/${pid}/active`,{method:"POST"});
   state.activeId=pid;
-  state.selected=null; state.picked.clear();
+  state.selected=null; state.PICKED.clear();
   renderProjects();
   updateActiveLabel();
+  renderSelCount();
   await scanProject();
 }
 
@@ -588,6 +678,12 @@ async function openProjectModal(pid){
   $("#projRecursive").checked = !!cfg.recursive;
   $("#projSkip").checked = cfg.skip_existing !== false;
   $("#projSharpen").checked = !!cfg.sharpen;
+  $("#projPerson").value = cfg.person_name || "";
+  $("#projGeneric").value = cfg.generic_subject || "a young East Asian woman";
+  $("#projStyleHint").value = cfg.style_hint || "";
+  $("#projExtra").value = cfg.extra_instructions || "";
+  $("#projShotTags").checked = cfg.shot_tags !== false;
+  $("#projAutoRename").checked = !!cfg.auto_rename;
 
   await loadProviderSelects(cfg);
   $("#projModal").classList.add("show");
@@ -686,6 +782,12 @@ $("#btnSaveProj").addEventListener("click",async()=>{
     model:$("#projModel").value,
     effort:$("#projEffort").value || "",
     trigger_word:$("#projTrigger").value.trim(),
+    person_name:$("#projPerson").value.trim(),
+    generic_subject:$("#projGeneric").value.trim(),
+    style_hint:$("#projStyleHint").value.trim(),
+    extra_instructions:$("#projExtra").value.trim(),
+    shot_tags:$("#projShotTags").checked,
+    auto_rename:$("#projAutoRename").checked,
     multiplier:parseFloat($("#projMultiplier").value),
     concurrency:+$("#projConcurrency").value,
     recursive:$("#projRecursive").checked,
@@ -749,6 +851,7 @@ async function scanProject(){
   }
 }
 
+/* ===================== 勾选 ===================== */
 function passFilter(f){
   if(state.filter==="all") return true;
   if(state.filter==="pending") return f.status==="pending";
@@ -756,6 +859,39 @@ function passFilter(f){
   if(state.filter==="error") return f.status==="error";
   return true;
 }
+
+function togglePick(path){
+  if(state.PICKED.has(path)) state.PICKED.delete(path);
+  else state.PICKED.add(path);
+  const card=document.querySelector(`.fileCard[data-path="${CSS.escape(path)}"]`);
+  if(card) card.classList.toggle("picked", state.PICKED.has(path));
+  renderSelCount();
+}
+
+function renderSelCount(){
+  const n=state.PICKED.size;
+  const tools=$("#selTools"), cnt=$("#selCnt");
+  if(tools) tools.hidden = n===0;
+  if(cnt){ cnt.textContent=`已选 ${n}`; cnt.classList.toggle("zero",n===0); }
+  // 按钮文案随勾选数变化
+  const bu=$("#btnRunUpscale"), bc=$("#btnRunCaption"), bp=$("#btnRunPipeline");
+  if(bu) bu.textContent = n?`放大 ${n} 张`:"放大";
+  if(bc) bc.textContent = n?`打标 ${n} 张`:"打标";
+  if(bp) bp.textContent = n?`全流程 ${n} 张`:"全流程";
+}
+
+function pickedPaths(){ return [...state.PICKED]; }
+
+$("#btnSelAll") && $("#btnSelAll").addEventListener("click",()=>{
+  state.files.filter(passFilter).forEach(f=>state.PICKED.add(f.path));
+  $$(".fileCard").forEach(c=>c.classList.add("picked"));
+  renderSelCount();
+});
+$("#btnSelNone") && $("#btnSelNone").addEventListener("click",()=>{
+  state.PICKED.clear();
+  $$(".fileCard").forEach(c=>c.classList.remove("picked"));
+  renderSelCount();
+});
 
 function renderGrid(){
   const grid=$("#fileGrid");
@@ -785,14 +921,14 @@ function renderGrid(){
   const frag=document.createDocumentFragment();
   files.forEach(f=>{
     const card=document.createElement("div");
-    card.className=`fileCard st-${f.status}`+(state.selected===f.path?" selected":"")+(state.picked.has(f.path)?" picked":"");
+    card.className=`fileCard st-${f.status}`+(state.selected===f.path?" selected":"")+(state.PICKED.has(f.path)?" picked":"");
     card.dataset.path=f.path;
     card.tabIndex=0;
     const w=f.w||1,h=f.h||1;
     const badge = f.status==="done_orig" ? "已打标" : f.status==="done" ? "完成"
       : f.status==="error" ? "失败" : "";
     card.innerHTML=`<img loading="lazy" decoding="async" width="${w}" height="${h}"
-        style="aspect-ratio:${w}/${h}" src="/api/image?path=${encodeURIComponent(f.path)}" alt="${esc(f.name)}">
+        style="aspect-ratio:${w}/${h}" src="/api/thumb?path=${encodeURIComponent(f.path)}&size=320" alt="${esc(f.name)}">
       <div class="pick" aria-hidden="true">✓</div>
       ${badge?`<div class="badge">${badge}</div>`:""}
       <div class="dims">${f.w}×${f.h}</div>
@@ -801,14 +937,17 @@ function renderGrid(){
     img.style.opacity=0;
     img.addEventListener("load",()=>{img.style.opacity=1;},{once:true});
     img.addEventListener("error",()=>{img.style.opacity=1;});
-    card.addEventListener("click",()=>selectFile(f.path));
+    // 点击 = 切换勾选；双击 = 只查看（不改变勾选）
+    card.addEventListener("click",()=>togglePick(f.path));
+    card.addEventListener("dblclick",e=>{ e.preventDefault(); selectFile(f.path); });
     card.addEventListener("keydown",e=>{
-      if(e.key==="Enter"||e.key===" "){e.preventDefault();selectFile(f.path);}
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();togglePick(f.path);}
     });
     frag.appendChild(card);
   });
   grid.appendChild(frag);
   layoutGrid();
+  renderSelCount();
 }
 
 const GAP=10, NAME_H=22;
@@ -866,8 +1005,8 @@ async function selectFile(path){
   let hasUp=false;
   if(outPath){
     try{
-      const r=await fetch("/api/image?path="+encodeURIComponent(outPath),{method:"HEAD"});
-      hasUp = r.ok;
+      const r=await fetch("/api/image?path="+encodeURIComponent(outPath));
+      hasUp = r.ok && (r.headers.get("content-type")||"").startsWith("image/");
     }catch(e){ hasUp=false; }
   }
   if(hasUp){
@@ -1031,6 +1170,125 @@ $("#btnOpenImg").addEventListener("click",()=>{
   if(state.selected) window.open("/api/image?path="+encodeURIComponent(state.selected),"_blank");
 });
 
+/* ============ 质检 ============ */
+$("#btnAudit").addEventListener("click",async()=>{
+  const p=activeProject();
+  if(!p){ toast("先选项目"); return; }
+  const cfg=p.config||{};
+  $("#auditModal").classList.add("show");
+  $("#auditBody").innerHTML='<div class="empty-hint" style="padding:30px"><strong>质检中…</strong></div>';
+  $("#auditSub").textContent="";
+  try{
+    const d=await (await fetch("/api/audit",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({directory:p.directory, recursive:!!cfg.recursive,
+        lora_type:cfg.lora_type||"person", trigger_word:cfg.trigger_word||""})})).json();
+    if(d.error){ $("#auditBody").innerHTML=`<div class="empty-hint" style="padding:24px"><strong>质检失败</strong><span>${esc(d.error)}</span></div>`; return; }
+    $("#auditSub").textContent=`${d.audited}/${d.total_images} 已打标 · ${d.issue_files} 张有问题`;
+    if(!d.issues.length){
+      $("#auditBody").innerHTML='<div class="empty-hint" style="padding:30px"><strong>全部通过</strong><span>没有发现问题</span></div>';
+      return;
+    }
+    const box=$("#auditBody");
+    box.innerHTML="";
+    d.issues.forEach((g,gi)=>{
+      const grp=document.createElement("div");
+      grp.className="auditGroup"+(gi===0?" open":"");
+      const head=document.createElement("div");
+      head.className="agHead";
+      head.innerHTML=`<span>${esc(g.label)}</span><span style="display:flex;gap:8px;align-items:center"><span class="cnt">${g.files.length}</span><span class="arrow">▶</span></span>`;
+      head.addEventListener("click",()=>grp.classList.toggle("open"));
+      grp.appendChild(head);
+      const files=document.createElement("div");
+      files.className="auditFiles";
+      g.files.forEach(f=>{
+        const row=document.createElement("div");
+        row.className="auditFile";
+        row.innerHTML=`<span class="an" title="${esc(f.path)}">${esc(f.name)}</span><span class="ac">${esc(f.caption||"（无内容）")}</span>`;
+        row.querySelector(".an").addEventListener("click",()=>{
+          $("#auditModal").classList.remove("show");
+          selectFile(f.path);
+        });
+        files.appendChild(row);
+      });
+      grp.appendChild(files);
+      box.appendChild(grp);
+    });
+  }catch(e){
+    $("#auditBody").innerHTML=`<div class="empty-hint" style="padding:24px"><strong>质检失败</strong><span>${esc(e.message)}</span></div>`;
+  }
+});
+$("#btnCloseAudit").addEventListener("click",()=>$("#auditModal").classList.remove("show"));
+$("#auditModal").addEventListener("click",e=>{ if(e.target.id==="auditModal") e.target.classList.remove("show"); });
+
+/* ============ 替换 ============ */
+$("#btnReplace").addEventListener("click",()=>{
+  $("#repFind").value=""; $("#repWith").value="";
+  $("#repResult").innerHTML=""; $("#btnRepApply").disabled=true;
+  $("#replaceModal").classList.add("show");
+  $("#repFind").focus();
+});
+$("#btnCloseReplace").addEventListener("click",()=>$("#replaceModal").classList.remove("show"));
+$("#replaceModal").addEventListener("click",e=>{ if(e.target.id==="replaceModal") e.target.classList.remove("show"); });
+
+async function doReplace(dry){
+  const p=activeProject();
+  if(!p){ toast("先选项目"); return; }
+  const find=$("#repFind").value;
+  if(!find.trim()){ toast("先填要查找的内容"); return; }
+  const cfg=p.config||{};
+  const d=await (await fetch("/api/replace",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:p.directory, recursive:!!cfg.recursive,
+      find, replace:$("#repWith").value,
+      whole_word:$("#repWhole").checked, case_sensitive:$("#repCase").checked,
+      dry_run:dry, keep_backup:$("#repBackup").checked})})).json();
+  if(d.error){ toast(d.error); return; }
+  const box=$("#repResult");
+  if(!d.matched){
+    box.innerHTML='<div class="empty-hint" style="padding:22px"><strong>没有匹配</strong></div>';
+    return;
+  }
+  box.innerHTML=`<div style="font-size:12px;margin-bottom:6px;color:${dry?"var(--safe)":"var(--done)"}">${
+    dry?`预览：${d.matched} 个文件将被修改`:`已写入 ${d.written} 个文件`}</div>`;
+  d.hits.forEach(h=>{
+    const div=document.createElement("div");
+    div.className="repHit";
+    div.innerHTML=`<div class="rn">${esc(h.name)}（${h.count} 处）</div>
+      <div class="rb">${esc(h.before)}</div><div class="ra">${esc(h.after)}</div>`;
+    box.appendChild(div);
+  });
+  $("#btnRepApply").disabled=!dry;
+  if(!dry){ toast("替换完成"); scanProject(); }
+}
+$("#btnRepPreview").addEventListener("click",()=>doReplace(true));
+$("#btnRepApply").addEventListener("click",()=>doReplace(false));
+
+/* ============ 改名 ============ */
+$("#btnRename").addEventListener("click",async()=>{
+  const p=activeProject();
+  if(!p){ toast("先选项目"); return; }
+  const cfg=p.config||{};
+  const name=(cfg.person_name||cfg.folder_name||p.name||"").trim();
+  if(!name){ toast("先在项目里填人物名字"); return; }
+  if(!confirm(`把目录改名为「${name}_张数」？
+
+${p.directory}
+
+只改目录名，不动文件。`)) return;
+  const d=await (await fetch("/api/rename/execute",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:p.directory,name})})).json();
+  if(d.error){ toast(d.error); return; }
+  if(d.unchanged){ toast("目录名已符合规则"); return; }
+  await fetch(`/api/projects/${p.id}`,{method:"PATCH",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({directory:d.new_path})});
+  await loadProjects();
+  await scanProject();
+  toast(`已改名为 ${d.target}`);
+});
+
 /* ============ 执行器 / 队列条 ============ */
 state.executor = {current:null, queue:[], recent:[]};
 
@@ -1082,17 +1340,29 @@ async function runAction(action){
   const p=activeProject();
   if(!p){ toast("先选一个项目"); return; }
   const labels={upscale:"放大",caption:"打标",pipeline:"全流程"};
+  const picked=pickedPaths();
+  const hasPicked = picked.length>0;
 
-  if(action==="pipeline"){
-    const outD=p.out_dir||"";
-    if(!confirm(`对项目「${p.name}」执行全流程？\n\n源目录：${p.directory}\n放大到：${outD}\n之后对放大结果打标\n\n（排队执行，不会与其他任务同时跑）`)) return;
+  // 勾选时确认范围
+  if(hasPicked){
+    const msg=`对项目「${p.name}」执行「${labels[action]}」\n\n`
+      +`范围：已勾选的 ${picked.length} 张\n`
+      +`源目录：${p.directory}\n`
+      +(action!=="caption"?`放大到：${p.out_dir}\n`:"")
+      +`\n勾选的图若已有结果也会重跑（覆盖）。继续？`;
+    if(!confirm(msg)) return;
+  }else if(action==="pipeline"){
+    if(!confirm(`对项目「${p.name}」执行全流程（全部图片）？\n\n源目录：${p.directory}\n放大到：${p.out_dir}\n之后对放大结果打标`)) return;
   }
+
+  const body={action};
+  if(hasPicked){ body.params={paths:picked, force:true}; }
 
   const r=await (await fetch(`/api/projects/${p.id}/run`,{method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({action})})).json();
+    body:JSON.stringify(body)})).json();
   if(r.error){ toast(r.error); return; }
-  toast(`已加入队列：${labels[action]}`);
+  toast(hasPicked?`已加入队列：${labels[action]} ${picked.length} 张`:`已加入队列：${labels[action]}`);
   pollExecutor();
 }
 
