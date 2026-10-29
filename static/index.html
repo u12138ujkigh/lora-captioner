@@ -594,6 +594,28 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 .projDivider::before,.projDivider::after{
   content:"";flex:1;height:1px;background:var(--rule-soft);
 }
+
+/* ---------- 对比区缩放（滚轮缩放 + 拖动平移） ---------- */
+/* 两张图同步变换；分割线在外层，不受缩放影响，滑动手感不变 */
+.cmpWrap img,#mnImgWrap img,.lbCompare img{
+  transform:translate(var(--tx,0px), var(--ty,0px)) scale(var(--z,1));
+  transform-origin:center center;
+  transition:none;
+  will-change:transform;
+}
+/* 放大后允许拖动 */
+.cmpWrap.zoomed,#mnImgWrap.zoomed,.lbCompare.zoomed{cursor:grab}
+.cmpWrap.zoomed.dragging,#mnImgWrap.zoomed.dragging,.lbCompare.zoomed.dragging{cursor:grabbing}
+/* 缩放倍数提示 */
+.zoomTag{
+  position:absolute;bottom:4px;left:50%;transform:translateX(-50%);
+  font-size:9.5px;line-height:14px;padding:0 6px;border-radius:3px;
+  background:rgba(12,17,24,.85);color:var(--safe-bright);
+  font-variant-numeric:tabular-nums;pointer-events:none;
+  opacity:0;transition:opacity .15s;
+}
+.cmpWrap:hover .zoomTag,#mnImgWrap:hover .zoomTag,.lbCompare:hover .zoomTag{opacity:1}
+.zoomTag.on{opacity:1}
 </style>
 </head>
 <body>
@@ -678,6 +700,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
         <div class="cmpLine" id="cmpLine"><span class="cmpGrip"></span></div>
         <span class="cmpTag left">原图</span>
         <span class="cmpTag right">放大后</span>
+        <span class="zoomTag" id="cmpZoomTag"></span>
       </div>
       <img id="previewImg" alt="">
       <div id="previewInfo">
@@ -740,6 +763,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
       <div class="lbLine" id="lbLine"><span class="lbGrip"></span></div>
       <span class="lbTag left">原图</span>
       <span class="lbTag right">放大后</span>
+      <span class="zoomTag" id="lbZoomTag"></span>
     </div>
   </div>
 </div>
@@ -775,6 +799,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
           <div class="mnLine" id="mnLine"><span class="mnGrip"></span></div>
           <span class="mnTag left">原图</span>
           <span class="mnTag right">放大后</span>
+          <span class="zoomTag" id="mnZoomTag"></span>
           <span class="mnPlaceholder" id="mnPlaceholder">等待中</span>
         </div>
         <div class="mnName" id="mnName">—</div>
@@ -1437,6 +1462,7 @@ async function selectFile(path){
   }
   if(hasUp){
     wrap.hidden=false; img.style.display="none";
+    resetCompareZoom(wrap);
     $("#cmpAfter").src="/api/image?path="+encodeURIComponent(outPath);
     $("#cmpBefore").src="/api/image?path="+encodeURIComponent(path);
     wrap.style.setProperty("--x","100%");
@@ -1546,7 +1572,19 @@ function updateLbInfo(){
   else { img.onload = done; $("#lbInfo").textContent = ""; }
 }
 
+function resetCompareZoom(el){
+  if(!el) return;
+  el.style.setProperty("--z", "1");
+  el.style.setProperty("--tx", "0px");
+  el.style.setProperty("--ty", "0px");
+  el.classList.remove("zoomed", "dragging");
+  delete el.dataset.dragging;
+  const tag = el.querySelector(".zoomTag");
+  if(tag){ tag.textContent = ""; tag.classList.remove("on"); }
+}
+
 function closeLightbox(){
+  resetCompareZoom($("#lbCompare"));
   lb.open = false;
   $("#lightbox").hidden = true;
   // 清掉大图 src，释放内存
@@ -1564,6 +1602,7 @@ $$("#lbModes button").forEach(b=>{
   b.addEventListener("click",()=>{
     lb.mode = b.dataset.m;
     lb.zoom = 1; lb.tx = 0; lb.ty = 0;
+    resetCompareZoom($("#lbCompare"));
     applyLbMode(); updateLbInfo();
   });
 });
@@ -1571,7 +1610,9 @@ $$("#lbModes button").forEach(b=>{
 /* 对比滑块：跟随鼠标 */
 (function bindLbCompare(){
   const box = $("#lbCompare");
+  bindCompareZoom(box, {tag:"#lbZoomTag"});
   const setX = e=>{
+    if(box.dataset.dragging === "1") return;    // 拖动时不改滑块
     const r = box.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     box.style.setProperty("--lx", (x*100)+"%");
@@ -1638,7 +1679,9 @@ $("#cmpWrap").addEventListener("dblclick", ()=>{
 
 (function bindCmp(){
   const wrap=$("#cmpWrap"); if(!wrap) return;
+  bindCompareZoom(wrap, {tag:"#cmpZoomTag"});
   const setX=e=>{
+    if(wrap.dataset.dragging === "1") return;   // 正在拖动图片，别动滑块
     const r=wrap.getBoundingClientRect();
     const x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
     wrap.style.setProperty("--x",(x*100)+"%");
@@ -2199,9 +2242,11 @@ $("#monList").addEventListener("scroll",()=>{
 (function bindMnCompare(){
   const wrap = $("#mnImgWrap");
   if(!wrap) return;
+  bindCompareZoom(wrap, {tag:"#mnZoomTag"});
 
   const setX = e=>{
     if(!mon.hasCompare) return;
+    if(wrap.dataset.dragging === "1") return;   // 拖动时不改滑块
     const r = wrap.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     wrap.style.setProperty("--mx", (x*100)+"%");
@@ -2225,6 +2270,110 @@ $("#monList").addEventListener("scroll",()=>{
     if(path) openLightbox(mon.imgSrc || path, mon.hasCompare);
   });
 })();
+
+/* ===================== 对比区缩放（滚轮 + 拖动） ===================== */
+/*
+  三处对比容器共用一套逻辑：右侧预览的 cmpWrap、监控面板的 mnImgWrap、
+  全屏的 lbCompare。
+
+  交互约定：
+  - 滚轮：以鼠标位置为中心缩放（0.5x ~ 8x）
+  - 缩放 > 1 时按住鼠标可拖动平移
+  - 双击复位
+  - 不缩放时鼠标移动仍然是「左右滑动对比」的手感
+*/
+function bindCompareZoom(el, opts){
+  if(!el || el.dataset.zoomBound) return;
+  el.dataset.zoomBound = "1";
+  const tagSel = opts && opts.tag ? opts.tag : "";
+  const MIN = 0.5, MAX = 8;
+  let z = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+
+  const apply = ()=>{
+    el.style.setProperty("--z", z);
+    el.style.setProperty("--tx", tx + "px");
+    el.style.setProperty("--ty", ty + "px");
+    el.classList.toggle("zoomed", z > 1.02);
+    const tag = tagSel ? document.querySelector(tagSel) : null;
+    if(tag){
+      if(z > 1.02){
+        tag.textContent = Math.round(z*100) + "%";
+        tag.classList.add("on");
+      }else{
+        tag.textContent = "";
+        tag.classList.remove("on");
+      }
+    }
+  };
+  const reset = ()=>{ z = 1; tx = 0; ty = 0; apply(); };
+
+  el.addEventListener("wheel", e=>{
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    // 鼠标相对容器中心（用于焦点缩放）
+    const cx = e.clientX - r.left - r.width/2;
+    const cy = e.clientY - r.top - r.height/2;
+
+    const step = e.deltaY < 0 ? 1.12 : 1/1.12;
+    const z1 = Math.max(MIN, Math.min(MAX, z * step));
+    if(z1 === z) return;
+
+    // 以鼠标点为不动点
+    const k = z1 / z;
+    tx = cx - (cx - tx) * k;
+    ty = cy - (cy - ty) * k;
+    z = z1;
+    // 缩放到最小时归位，避免残留偏移
+    if(z <= 1.02){ z = 1; tx = 0; ty = 0; }
+    apply();
+  }, {passive:false});
+
+  el.addEventListener("mousedown", e=>{
+    if(z <= 1.02) return;             // 没放大就不拖动，保持滑块手感
+    e.preventDefault();
+    dragging = true;
+    el.dataset.dragging = "1";
+    el.classList.add("dragging");
+    sx = e.clientX; sy = e.clientY;
+    ox = tx; oy = ty;
+  });
+  window.addEventListener("mousemove", e=>{
+    if(!dragging) return;
+    tx = ox + (e.clientX - sx);
+    ty = oy + (e.clientY - sy);
+    apply();
+  });
+  window.addEventListener("mouseup", ()=>{
+    if(!dragging) return;
+    dragging = false;
+    delete el.dataset.dragging;
+    el.classList.remove("dragging");
+  });
+
+  el.addEventListener("dblclick", e=>{ e.preventDefault(); reset(); });
+
+  // 触屏双指缩放
+  let pinch = null;
+  el.addEventListener("touchstart", e=>{
+    if(e.touches.length === 2){
+      const [a,b] = e.touches;
+      pinch = { d: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY), z };
+    }
+  }, {passive:true});
+  el.addEventListener("touchmove", e=>{
+    if(pinch && e.touches.length === 2){
+      const [a,b] = e.touches;
+      const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      z = Math.max(MIN, Math.min(MAX, pinch.z * (d / (pinch.d || 1))));
+      tx = 0; ty = 0;
+      apply();
+      e.preventDefault();
+    }
+  }, {passive:false});
+  el.addEventListener("touchend", ()=>{ pinch = null; });
+
+  el.addEventListener("mouseleave", ()=>{ /* 缩放状态保留，方便继续看 */ });
+}
 
 /* ============ 单张图详情 ============ */
 let _itemView = "upscaled";     // upscaled | original
