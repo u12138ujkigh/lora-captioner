@@ -1453,6 +1453,38 @@ def _file_info(fp: Path) -> dict:
         return {"path": str(fp), "exists": False, "error": str(e)}
 
 
+def _path_in_project(target: Path, pj: dict) -> bool:
+    """这张图是否属于该项目的源目录或输出目录。"""
+    for key in ("directory", "out_dir"):
+        d = pj.get(key) or ""
+        if not d:
+            continue
+        try:
+            target.resolve().relative_to(Path(d).resolve())
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _project_for_path(target: Path) -> Optional[dict]:
+    """找出这张图属于哪个项目：源目录或放大目录是其前缀，取最长匹配。"""
+    best = None
+    best_len = -1
+    for pj in _projects.all():
+        for key in ("directory", "out_dir"):
+            d = pj.get(key) or ""
+            if not d:
+                continue
+            try:
+                target.resolve().relative_to(Path(d).resolve())
+            except Exception:
+                continue
+            if len(d) > best_len:
+                best, best_len = pj, len(d)
+    return best
+
+
 @app.get("/api/item-status")
 def api_item_status(path: str, project_id: str = ""):
     """单张图的完整状态：原图 / 放大 / 打标 / 本任务中的处理结果。
@@ -1468,14 +1500,22 @@ def api_item_status(path: str, project_id: str = ""):
         return JSONResponse({"error": f"文件不存在：{path}"}, status_code=404)
 
     # ---- 定位项目与输出目录 ----
-    out_dir = ""
+    # 优先用前端传的项目；但只有当它确实包含这张图时才采信，
+    # 否则按路径自动找（避免「激活项目」与「查看的图」不一致时查不到放大图）
+    pj = None
     if project_id:
-        pj = _projects.get(project_id)
-        if pj:
-            out_dir = pj.get("out_dir") or ""
-            if not out_dir:
-                d = Path(pj["directory"])
-                out_dir = str(d.parent / (d.name + "_放大"))
+        cand = _projects.get(project_id)
+        if cand and _path_in_project(target, cand):
+            pj = cand
+    if pj is None:
+        pj = _project_for_path(target)
+
+    out_dir = ""
+    if pj:
+        out_dir = pj.get("out_dir") or ""
+        if not out_dir:
+            d = Path(pj["directory"])
+            out_dir = str(d.parent / (d.name + "_放大"))
 
     out_root = Path(out_dir) if out_dir else None
     in_out = False

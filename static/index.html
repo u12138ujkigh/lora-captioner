@@ -414,8 +414,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   position:relative;flex:1;min-height:280px;
   display:flex;align-items:center;justify-content:center;overflow:hidden;
 }
-.itemLeft img{max-width:100%;max-height:420px;object-fit:contain;display:none}
-.itemLeft img.show{display:block}
+.itemLeft img{max-width:100%;max-height:420px;object-fit:contain;display:block;cursor:zoom-in}
 .itemLeft .ilEmpty{color:var(--text-mute);font-size:12px}
 .itemLeft .ilSwitch{
   display:flex;gap:2px;padding:6px;border-top:1px solid var(--rule);
@@ -460,6 +459,82 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
 }
 .itemErrText{color:var(--fail);font-size:11.5px;line-height:1.6;
   padding:6px 8px;border-radius:var(--r-sm);background:rgba(247,109,109,.1)}
+
+/* ---------- 全屏查看 ---------- */
+#lightbox{
+  position:fixed;inset:0;z-index:300;background:rgba(4,6,10,.97);
+  display:flex;flex-direction:column;
+}
+#lightbox .lbTop{
+  display:flex;align-items:center;gap:10px;padding:8px 14px;flex-shrink:0;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  background:rgba(17,23,33,.9);
+}
+#lightbox .lbName{font-size:12.5px;font-weight:600;color:var(--text);
+  font-family:"Cascadia Mono",monospace}
+#lightbox .lbInfo{font-size:11.5px;color:var(--text-mute);
+  font-variant-numeric:tabular-nums}
+#lightbox .lbHint{font-size:10.5px;color:#4a5568}
+#lightbox .lbModes{display:flex;gap:2px;background:var(--paper-2);
+  border:1px solid var(--rule);border-radius:var(--r-sm);padding:2px}
+#lightbox .lbModes button{
+  padding:3px 10px;border:none;border-radius:3px;background:transparent;
+  color:var(--text-mute);font-family:inherit;font-size:11.5px;cursor:pointer;
+}
+#lightbox .lbModes button:not(.active):hover{color:var(--text)}
+#lightbox .lbModes button.active{background:var(--safe);color:#04121f;font-weight:600}
+
+.lbStage{flex:1;position:relative;overflow:hidden;min-height:0}
+
+/* 单图 */
+.lbSingle{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;cursor:grab;
+}
+.lbSingle.dragging{cursor:grabbing}
+.lbSingle img{
+  max-width:100%;max-height:100%;object-fit:contain;
+  transform-origin:center center;user-select:none;-webkit-user-drag:none;
+  transition:transform .06s linear;will-change:transform;
+}
+
+/* 对比 */
+.lbCompare{
+  position:absolute;inset:0;overflow:hidden;cursor:ew-resize;user-select:none;
+  background:#05070b;
+}
+.lbCompare img{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  pointer-events:none;-webkit-user-drag:none;
+}
+#lbBefore{clip-path:inset(0 calc(100% - var(--lx,50%)) 0 0)}
+.lbLine{
+  position:absolute;top:0;bottom:0;left:var(--lx,50%);width:2px;margin-left:-1px;
+  background:var(--safe);box-shadow:0 0 14px var(--safe-glow);pointer-events:none;
+}
+.lbGrip{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:28px;height:28px;border-radius:50%;background:var(--safe);
+  border:2px solid #04121f;box-shadow:0 2px 10px rgba(0,0,0,.6);
+}
+.lbGrip::before,.lbGrip::after{
+  content:"";position:absolute;top:50%;transform:translateY(-50%);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;
+}
+.lbGrip::before{left:5px;border-right:4px solid #04121f}
+.lbGrip::after{right:5px;border-left:4px solid #04121f}
+.lbTag{
+  position:absolute;top:10px;font-size:11px;line-height:18px;padding:1px 8px;
+  border-radius:3px;background:rgba(12,17,24,.85);color:var(--text-dim);
+  pointer-events:none;
+}
+.lbTag.left{left:12px}
+.lbTag.right{right:12px;color:var(--safe-bright)}
+
+/* 预览区可点提示 */
+.cmpWrap{cursor:zoom-in}
+#previewImg{cursor:zoom-in}
+#previewImg.zoomed{max-height:none;cursor:zoom-in}
 </style>
 </head>
 <body>
@@ -576,6 +651,35 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
   <button class="btn small" id="btnMonitor" title="展开实时监控面板">监控 ▲</button>
+</div>
+
+<!-- 全屏查看 -->
+<div id="lightbox" hidden>
+  <div class="lbTop">
+    <span class="lbName" id="lbName"></span>
+    <span class="lbInfo" id="lbInfo"></span>
+    <span class="spacer"></span>
+    <div class="lbModes" id="lbModes" hidden>
+      <button data-m="compare" class="active">对比</button>
+      <button data-m="single">单图</button>
+    </div>
+    <span class="lbHint">滚轮缩放 · 拖动平移 · Esc 关闭</span>
+    <button class="btn small ghost" id="lbClose">✕</button>
+  </div>
+  <div class="lbStage" id="lbStage">
+    <!-- 单图模式 -->
+    <div class="lbSingle" id="lbSingle" hidden>
+      <img id="lbImg" alt="">
+    </div>
+    <!-- 对比模式 -->
+    <div class="lbCompare" id="lbCompare" hidden>
+      <img id="lbAfter" alt="放大后">
+      <img id="lbBefore" alt="原图">
+      <div class="lbLine" id="lbLine"><span class="lbGrip"></span></div>
+      <span class="lbTag left">原图</span>
+      <span class="lbTag right">放大后</span>
+    </div>
+  </div>
 </div>
 
 <!-- 单张图详情 -->
@@ -1212,7 +1316,178 @@ async function selectFile(path){
   $("#pvStatus").innerHTML=st + (hasUp?`<span class="pvState st-ok">已放大</span>`:"");
 }
 
-$("#previewImg").addEventListener("click",()=>$("#previewImg").classList.toggle("zoomed"));
+$("#previewImg").addEventListener("click",()=>{
+  if(state.selected) openLightbox(state.selected, false);
+});
+
+/* ===================== 全屏查看 ===================== */
+const lb = {
+  open: false, mode: "single",    // single | compare
+  zoom: 1, tx: 0, ty: 0,
+  srcPath: "", upPath: "",
+  dragging: false, sx: 0, sy: 0, ox: 0, oy: 0,
+};
+
+async function openLightbox(srcPath, compare){
+  lb.srcPath = srcPath;
+  lb.open = true;
+  lb.zoom = 1; lb.tx = 0; lb.ty = 0;
+
+  $("#lightbox").hidden = false;
+  $("#lbName").textContent = srcPath.split(/[\\/]/).pop();
+  $("#lbImg").src = "/api/image?path=" + encodeURIComponent(srcPath);
+  $("#lbModes").hidden = true;
+  $("#lbInfo").textContent = "读取中…";
+  lb.mode = "single";
+  applyLbMode();
+
+  // 用详情接口拿放大图路径（比从项目配置推导可靠）
+  let upPath = "";
+  try{
+    const pj = activeProject();
+    const qs = new URLSearchParams({ path: srcPath, project_id: pj ? pj.id : "" });
+    const info = await (await fetch("/api/item-status?" + qs)).json();
+    if(info && info.upscaled && info.upscaled.exists){
+      upPath = info.upscaled.path;
+    }
+  }catch(e){}
+
+  lb.upPath = upPath;
+  const hasUp = !!upPath;
+
+  if(hasUp){
+    $("#lbAfter").src = "/api/image?path=" + encodeURIComponent(upPath);
+    $("#lbBefore").src = "/api/image?path=" + encodeURIComponent(srcPath);
+    $("#lbModes").hidden = false;
+    if(compare){ lb.mode = "compare"; }
+  }else{
+    $("#lbModes").hidden = true;
+    lb.mode = "single";
+  }
+  applyLbMode();
+  updateLbInfo();
+}
+
+function applyLbMode(){
+  const cmp = lb.mode === "compare";
+  $("#lbCompare").hidden = !cmp;
+  $("#lbSingle").hidden = cmp;
+  if(cmp){
+    $("#lbCompare").style.setProperty("--lx","50%");
+  }else{
+    applyLbTransform();
+  }
+  $$("#lbModes button").forEach(b=>b.classList.toggle("active", b.dataset.m===lb.mode));
+}
+
+function applyLbTransform(){
+  const img = $("#lbImg");
+  img.style.transform = `translate(${lb.tx}px, ${lb.ty}px) scale(${lb.zoom})`;
+}
+
+function updateLbInfo(){
+  const img = lb.mode==="compare" ? $("#lbAfter") : $("#lbImg");
+  const done = ()=>{
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const bits = [];
+    if(w) bits.push(`${w}×${h}`);
+    if(lb.zoom !== 1) bits.push(`${Math.round(lb.zoom*100)}%`);
+    if(lb.mode==="compare") bits.push("拖动滑块对比");
+    $("#lbInfo").textContent = bits.join(" · ");
+  };
+  if(img.complete && img.naturalWidth) done();
+  else { img.onload = done; $("#lbInfo").textContent = ""; }
+}
+
+function closeLightbox(){
+  lb.open = false;
+  $("#lightbox").hidden = true;
+  // 清掉大图 src，释放内存
+  $("#lbImg").src = "";
+  $("#lbAfter").src = "";
+  $("#lbBefore").src = "";
+}
+
+$("#lbClose").addEventListener("click",closeLightbox);
+$("#lightbox").addEventListener("click",e=>{
+  if(e.target.id === "lightbox") closeLightbox();
+});
+
+$$("#lbModes button").forEach(b=>{
+  b.addEventListener("click",()=>{
+    lb.mode = b.dataset.m;
+    lb.zoom = 1; lb.tx = 0; lb.ty = 0;
+    applyLbMode(); updateLbInfo();
+  });
+});
+
+/* 对比滑块：跟随鼠标 */
+(function bindLbCompare(){
+  const box = $("#lbCompare");
+  const setX = e=>{
+    const r = box.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    box.style.setProperty("--lx", (x*100)+"%");
+  };
+  box.addEventListener("mousemove", setX);
+  box.addEventListener("mousedown", setX);
+  box.addEventListener("touchmove", e=>{
+    if(!e.touches.length) return;
+    const r = box.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.touches[0].clientX - r.left)/r.width));
+    box.style.setProperty("--lx", (x*100)+"%");
+    e.preventDefault();
+  }, {passive:false});
+})();
+
+/* 单图：滚轮缩放 + 拖动平移 */
+(function bindLbSingle(){
+  const stage = $("#lbSingle");
+  stage.addEventListener("wheel", e=>{
+    e.preventDefault();
+    const step = e.deltaY < 0 ? 1.15 : 1/1.15;
+    lb.zoom = Math.max(0.5, Math.min(8, lb.zoom * step));
+    applyLbTransform();
+    updateLbInfo();
+  }, {passive:false});
+
+  stage.addEventListener("mousedown", e=>{
+    if(lb.zoom <= 1) return;
+    lb.dragging = true; stage.classList.add("dragging");
+    lb.sx = e.clientX; lb.sy = e.clientY;
+    lb.ox = lb.tx; lb.oy = lb.ty;
+  });
+  window.addEventListener("mousemove", e=>{
+    if(!lb.dragging) return;
+    lb.tx = lb.ox + (e.clientX - lb.sx);
+    lb.ty = lb.oy + (e.clientY - lb.sy);
+    applyLbTransform();
+  });
+  window.addEventListener("mouseup", ()=>{
+    if(!lb.dragging) return;
+    lb.dragging = false; stage.classList.remove("dragging");
+  });
+
+  // 双击复位
+  stage.addEventListener("dblclick", ()=>{
+    lb.zoom = 1; lb.tx = 0; lb.ty = 0;
+    applyLbTransform(); updateLbInfo();
+  });
+})();
+
+/* 详情弹窗里的图也能点开全屏 */
+document.addEventListener("click", e=>{
+  const img = e.target.closest("#itemImg");
+  if(img && img.src){
+    const m = /[?&]path=([^&]+)/.exec(img.src);
+    if(m) openLightbox(decodeURIComponent(m[1]), false);
+  }
+});
+
+/* 对比区点击 → 全屏对比 */
+$("#cmpWrap").addEventListener("dblclick", ()=>{
+  if(state.selected) openLightbox(state.selected, true);
+});
 
 (function bindCmp(){
   const wrap=$("#cmpWrap"); if(!wrap) return;
@@ -1908,6 +2183,7 @@ document.addEventListener("keydown",e=>{
     e.preventDefault(); if(state.selected) $("#btnSaveCap").click(); return;
   }
   if(e.key==="Escape"){
+    if(lb.open){ closeLightbox(); return; }
     $$(".modalBackdrop.show").forEach(m=>m.classList.remove("show"));
     return;
   }
