@@ -303,6 +303,10 @@ def _handle_upscale(job: ex.Job) -> None:
         todo.append(it)
 
     total = len(todo)
+    # 登记逐张明细（监控面板读这个）
+    job.init_items([{"name": Path(it["path"]).name, "path": it["path"],
+                     "src": [it.get("width", 0), it.get("height", 0)]}
+                    for it in todo])
     _executor.set_progress(job, stage="upscale", done=0, total=total, label=p["name"])
     if not total:
         job.result = {"skipped_all": True, "total": 0}
@@ -314,23 +318,34 @@ def _handle_upscale(job: ex.Job) -> None:
     for it in todo:
         if job.cancel_requested:
             break
+        nm = Path(it["path"]).name
+        job.item_start(it["path"])
+        _executor.set_progress(job, stage="upscale", done=done + len(errors),
+                               total=total, ok=done, errors=len(errors),
+                               current=nm, current_path=it["path"])
+        emit({"type": "task_stage", "path": it["path"], "name": nm,
+              "stage": "upscale"})
+        t0 = time.time()
         try:
             dst = out_root / Path(it["path"]).name
             res = upscaler.run_one(
                 str(it["path"]), str(dst),
                 float(cfg.get("multiplier", 3.0)),
                 bool(cfg.get("sharpen", False)))
+            ms = int((time.time() - t0) * 1000)
             if res.get("ok"):
                 done += 1
+                job.item_done(it["path"], ms,
+                              dst=[res.get("width"), res.get("height")])
             else:
-                errors.append({"name": Path(it["path"]).name,
-                               "error": res.get("error", "")})
+                errors.append({"name": nm, "error": res.get("error", "")})
+                job.item_error(it["path"], res.get("error", ""), ms)
         except Exception as e:
-            errors.append({"name": Path(it["path"]).name, "error": str(e)})
+            ms = int((time.time() - t0) * 1000)
+            errors.append({"name": nm, "error": str(e)})
+            job.item_error(it["path"], str(e), ms)
         _executor.set_progress(job, stage="upscale", done=done + len(errors),
                                total=total, ok=done, errors=len(errors))
-        emit({"type": "task_stage", "path": it["path"], "name": Path(it["path"]).name,
-              "stage": "upscale"})
 
     try:
         upscaler.free_comfy_memory()
@@ -385,6 +400,9 @@ def _handle_caption(job: ex.Job) -> None:
         pending.append(it)
 
     total = len(pending)
+    job.init_items([{"name": it["name"], "path": it["path"],
+                     "src": [it.get("width", 0), it.get("height", 0)]}
+                    for it in pending])
     _executor.set_progress(job, stage="caption", done=0, total=total, label=p["name"])
     if not total:
         job.result = {"skipped_all": True, "total": 0}
@@ -405,6 +423,11 @@ def _handle_caption(job: ex.Job) -> None:
                     return
                 it = pending[cur["i"]]
                 cur["i"] += 1
+            job.item_start(it["path"])
+            _executor.set_progress(job, stage="caption", done=done["n"] + len(errors),
+                                   total=total, ok=done["n"], errors=len(errors),
+                                   current=it["name"], current_path=it["path"])
+            _t0 = time.time()
             try:
                 raw = prov.caption_image(
                     provider_id=cfg["provider_id"], model=cfg["model"],
@@ -419,6 +442,8 @@ def _handle_caption(job: ex.Job) -> None:
                     text = cap.ensure_shot_tag(
                         text, cap.shot_tag_from_name(it["name"]))
                 cap.backup_and_write(Path(it["path"]).with_suffix(".txt"), text)
+                job.item_done(it["path"], int((time.time() - _t0) * 1000),
+                              caption=text)
                 with lock:
                     done["n"] += 1
                     n, e = done["n"], len(errors)
@@ -427,6 +452,7 @@ def _handle_caption(job: ex.Job) -> None:
                 emit({"type": "task_done", "path": it["path"], "name": it["name"],
                       "caption": text, "duration_ms": 0})
             except Exception as e:
+                job.item_error(it["path"], str(e), int((time.time() - _t0) * 1000))
                 with lock:
                     errors.append({"name": it["name"], "error": str(e)})
                     n, e2 = done["n"], len(errors)
@@ -569,6 +595,20 @@ def api_project_run(pid: str, req: dict):
 @app.get("/api/executor")
 def api_executor_state():
     return _executor.snapshot()
+
+
+@app.get("/api/executor/monitor")
+def api_executor_monitor():
+    """监控面板：当前任务的全部逐张明细 + 队列 + 最近结果。"""
+    return _executor.monitor()
+
+
+@app.get("/api/executor/job/{job_id}")
+def api_executor_job(job_id: str):
+    d = _executor.get_job(job_id)
+    if d is None:
+        return JSONResponse({"error": "任务不存在"}, status_code=404)
+    return d
 
 
 @app.post("/api/executor/cancel/{job_id}")

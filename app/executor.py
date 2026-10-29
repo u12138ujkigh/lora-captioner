@@ -34,6 +34,58 @@ class Job:
     finished_at: float = 0.0
     cancel_requested: bool = False
     result: dict = field(default_factory=dict)
+    # 逐张明细（供监控面板用）。每条：
+    # {name, path, status: pending|running|done|error, duration_ms, error,
+    #  src:[w,h], dst:[w,h], caption}
+    items: list = field(default_factory=list)
+    _item_index: dict = field(default_factory=dict)
+
+    # ---------- 逐张明细 ----------
+    def init_items(self, entries: list) -> None:
+        """任务开始时登记待处理列表（只存轻量字段，不带二进制）。"""
+        self.items = [
+            {"name": e.get("name", ""), "path": e.get("path", ""),
+             "status": "pending", "duration_ms": 0, "error": "",
+             "src": e.get("src") or [], "dst": [], "caption": ""}
+            for e in entries
+        ]
+        self._item_index = {it["path"]: i for i, it in enumerate(self.items)}
+
+    def item_start(self, path: str) -> Optional[int]:
+        i = self._item_index.get(path)
+        if i is None:
+            return None
+        self.items[i]["status"] = "running"
+        return i
+
+    def item_done(self, path: str, duration_ms: int = 0,
+                  dst: Optional[list] = None, caption: str = "") -> None:
+        i = self._item_index.get(path)
+        if i is None:
+            return
+        it = self.items[i]
+        it["status"] = "done"
+        it["duration_ms"] = duration_ms
+        if dst:
+            it["dst"] = dst
+        if caption:
+            it["caption"] = caption[:120]
+
+    def item_error(self, path: str, error: str, duration_ms: int = 0) -> None:
+        i = self._item_index.get(path)
+        if i is None:
+            return
+        it = self.items[i]
+        it["status"] = "error"
+        it["error"] = str(error)[:200]
+        it["duration_ms"] = duration_ms
+
+    def items_summary(self) -> dict:
+        """监控面板用的汇总（不含完整列表）。"""
+        n = {"pending": 0, "running": 0, "done": 0, "error": 0}
+        for it in self.items:
+            n[it["status"]] = n.get(it["status"], 0) + 1
+        return n
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +97,7 @@ class Job:
             "cancel_requested": self.cancel_requested,
             "result": self.result,
             "params": self.params,
+            "counts": self.items_summary(),
         }
 
 
@@ -174,6 +227,39 @@ class Executor:
         with self._lock:
             return self._current is not None or any(
                 j.status == "pending" for j in self._queue)
+
+    # ---------- 单任务查询（监控面板用）----------
+    def get_job(self, job_id: str) -> Optional[dict]:
+        """返回某个任务的完整详情，含逐张明细。"""
+        with self._lock:
+            job = next((j for j in self._queue if j.id == job_id), None)
+            if job is None and self._current and self._current.id == job_id:
+                job = self._current
+            if job is None:
+                return None
+            d = job.to_dict()
+            d["items"] = list(job.items)
+            d["items_total"] = len(job.items)
+            return d
+
+    def monitor(self) -> dict:
+        """监控面板总览：当前任务 + 队列 + 最近结果（含逐张明细）。"""
+        with self._lock:
+            cur = self._current
+            out = {
+                "busy": cur is not None,
+                "current": None,
+                "queue": [j.to_dict() for j in self._queue
+                          if j.status == "pending"],
+                "recent": [j.to_dict() for j in self._queue
+                           if j.status not in ("pending", "running")][-5:],
+            }
+            if cur:
+                d = cur.to_dict()
+                d["items"] = list(cur.items)
+                d["items_total"] = len(cur.items)
+                out["current"] = d
+            return out
 
 
 # --------------------------------------------------------------------------- #
