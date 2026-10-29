@@ -2029,6 +2029,9 @@ async function mnSetImage(curPath){
   mon.hasCompare = false;
   mon.imgSrc = curPath;
   mon.imgUp = "";
+  // 换图必须清掉上一张的缩放与平移，否则新图会带着旧倍率和偏移出现，
+  // 放大过的图平移量可能让新图整个偏出可视区
+  resetCompareZoom($("#mnImgWrap"));
   $("#mnImgWrap").classList.remove("has-compare");
   $("#mnBefore").classList.remove("show");
 
