@@ -104,6 +104,7 @@ def emit(event: dict) -> None:
 _projects = proj_mod.ProjectStore(APP_DIR.parent / "projects.json")
 _executor = ex.Executor(emit)
 _QUEUE_FILE = APP_DIR.parent / "queue_state.json"
+_uvicorn_server = None      # main() 里赋值，供 /api/shutdown 优雅退出
 _THUMB_DIR = APP_DIR.parent / ".thumb_cache"
 
 
@@ -631,6 +632,50 @@ def api_executor_cancel(job_id: str):
 def api_executor_cancel_all():
     _executor.cancel_all()
     return {"ok": True}
+
+
+@app.post("/api/shutdown")
+def api_shutdown(force: bool = False):
+    """关闭 WebUI。
+
+    默认拒绝：还有任务在跑或排队时返回 409，避免正在写文件时被打断。
+    传 force=true 才强制关闭（会中断当前任务）。
+
+    先用 uvicorn 的 should_exit 走正常退出流程；拿不到 server 实例时
+    退化为直接结束进程。
+    """
+    snap = _executor.snapshot()
+    cur = snap.get("current")
+    queued = snap.get("queue") or []
+
+    if (cur or queued) and not force:
+        return JSONResponse({
+            "error": "还有任务没完成，需 force=true 才能关闭",
+            "busy": True,
+            "current": (cur or {}).get("label", ""),
+            "queued": len(queued),
+        }, status_code=409)
+
+    # 记下队列，下次启动可以接着跑
+    try:
+        ex.save_queue(_executor, _QUEUE_FILE)
+    except Exception:
+        pass
+    try:
+        _executor.cancel_all()
+    except Exception:
+        pass
+
+    def _exit_soon():
+        time.sleep(0.5)          # 留时间把响应发回客户端
+        srv = _uvicorn_server
+        if srv is not None:
+            srv.should_exit = True
+        else:
+            os._exit(0)
+
+    threading.Thread(target=_exit_soon, daemon=True).start()
+    return {"ok": True, "interrupted": bool(cur or queued)}
 
 
 @app.post("/api/executor/clear")
@@ -1958,10 +2003,16 @@ def _bootstrap() -> None:
 
 
 def main() -> None:
+    global _uvicorn_server
     port = int(os.environ.get("CAPTIONER_PORT", "7860"))
     _bootstrap()
     print(f"LoRA Captioner WebUI -> http://127.0.0.1:{port}")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    # 用 Server 实例而不是 uvicorn.run()，这样 /api/shutdown 能拿到它
+    # 设置 should_exit，走 uvicorn 自己的正常退出流程
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    _uvicorn_server = uvicorn.Server(config)
+    _uvicorn_server.run()
+    print("[exit] 服务已停止")
 
 
 if __name__ == "__main__":
