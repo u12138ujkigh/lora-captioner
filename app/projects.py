@@ -122,7 +122,8 @@ class ProjectStore:
 
     # ---------- 增删改 ----------
     def create(self, name: str, directory: str,
-               config: Optional[dict] = None) -> dict:
+               config: Optional[dict] = None,
+               out_dir: Optional[str] = None) -> dict:
         with _lock:
             pid = "p" + uuid.uuid4().hex[:10]
             now = time.time()
@@ -131,7 +132,9 @@ class ProjectStore:
                 "id": pid,
                 "name": name or src.name or "未命名",
                 "directory": str(src),
-                "out_dir": str(src.parent / (src.name + "_放大")),
+                # 留空则推导为同级的「目录名_放大」
+                "out_dir": str(out_dir).strip() if out_dir and str(out_dir).strip()
+                           else str(src.parent / (src.name + "_放大")),
                 "config": dict(DEFAULT_CONFIG, **(config or {})),
                 "archived": False,
                 "created_at": now,

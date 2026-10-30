@@ -583,6 +583,15 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   color:var(--text-mute);font-size:11px;line-height:1;cursor:pointer;
   opacity:0;transition:opacity .12s,color .12s,background-color .12s;
 }
+.projItem .setBtn{
+  flex-shrink:0;width:20px;height:20px;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:3px;border:1px solid transparent;background:transparent;
+  color:var(--text-mute);font-size:11px;line-height:1;cursor:pointer;
+  opacity:0;transition:opacity .12s,color .12s,background-color .12s;
+}
+.projItem:hover .setBtn{opacity:1}
+.projItem .setBtn:hover{background:var(--paper-3);color:var(--safe-bright)}
 .projItem:hover .archBtn{opacity:1}
 .projItem .archBtn:hover{background:var(--paper-3);color:var(--safe-bright)}
 .projItem.archived .archBtn{opacity:.7}
@@ -637,6 +646,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   border:1px solid rgba(167,139,250,.4);cursor:pointer;
 }
 #queueBar .qpaused:hover{background:rgba(167,139,250,.26)}
+
+/* 设置弹窗分组 */
+.setGroup{
+  border:1px solid var(--rule);border-radius:var(--r-sm);
+  padding:11px 12px;margin-bottom:10px;background:rgba(255,255,255,.012);
+}
+.setGroup:last-child{margin-bottom:0}
+.sgTitle{
+  font-size:11.5px;font-weight:600;color:var(--safe-bright);
+  margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--rule-soft);
+  letter-spacing:.02em;
+}
+.setGroup .field:last-child{margin-bottom:0}
+.dirRow{display:flex;gap:5px}
+.dirRow input{flex:1;min-width:0}
+.setGroup code{
+  font-family:"Cascadia Mono",monospace;font-size:10.5px;
+  padding:0 3px;border-radius:2px;background:var(--paper-3);color:var(--text-dim);
+}
+.modalFoot .spacer{flex:1}
 </style>
 </head>
 <body>
@@ -654,7 +683,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <button class="btn ghost small" id="btnAudit" title="质检当前目录的 caption">质检</button>
   <button class="btn ghost small" id="btnReplace" title="批量查找替换 caption">替换</button>
   <button class="btn ghost small" id="btnRename" title="把当前项目目录改名为 名字_张数">改名</button>
-  <button class="btn ghost small" id="btnSaveCfg" title="保存当前项目配置">保存设置</button>
+  <button class="btn ghost small" id="btnSaveCfg" title="打开当前项目的全部设置">⚙ 设置</button>
 </div>
 
 <div id="main">
@@ -758,6 +787,281 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
   <button class="btn small" id="btnMonitor" title="展开实时监控面板">监控 ▲</button>
+</div>
+
+<!-- 全屏查看 -->
+<div id="lightbox" hidden>
+  <div class="lbTop">
+    <span class="lbName" id="lbName"></span>
+    <span class="lbInfo" id="lbInfo"></span>
+    <span class="spacer"></span>
+    <div class="lbModes" id="lbModes" hidden>
+      <button data-m="compare" class="active">对比</button>
+      <button data-m="single">单图</button>
+    </div>
+    <span class="lbHint">滚轮缩放 · 拖动平移 · Esc 关闭</span>
+    <button class="btn small ghost" id="lbClose">✕</button>
+  </div>
+  <div class="lbStage" id="lbStage">
+    <!-- 单图模式 -->
+    <div class="lbSingle" id="lbSingle" hidden>
+      <img id="lbImg" alt="">
+    </div>
+    <!-- 对比模式 -->
+    <div class="lbCompare" id="lbCompare" hidden>
+      <img id="lbAfter" alt="放大后">
+      <img id="lbBefore" alt="原图">
+      <div class="lbLine" id="lbLine"><span class="lbGrip"></span></div>
+      <span class="lbTag left">原图</span>
+      <span class="lbTag right">放大后</span>
+      <span class="zoomTag" id="lbZoomTag"></span>
+    </div>
+  </div>
+</div>
+
+<!-- 单张图详情 -->
+<div id="itemModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:820px">
+    <div class="modalHead">
+      <span id="itemTitle">图片详情</span>
+      <button class="btn small ghost" id="btnCloseItem">✕</button>
+    </div>
+    <div class="modalScroll" id="itemBody" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- 实时监控面板 -->
+<div id="monitorPanel" hidden>
+  <div class="monHead">
+    <span class="mhTitle" id="monTitle">实时监控</span>
+    <span class="mhStage" id="monStage"></span>
+    <span class="spacer"></span>
+    <span class="mhStat" id="monStat"></span>
+    <button class="btn small ghost" id="btnMonCancel" hidden>取消任务</button>
+    <button class="btn small ghost" id="btnMonClose">收起 ▼</button>
+  </div>
+  <div class="resumeBar" id="resumeBar" hidden>
+    <span class="rbIcon">⏸</span>
+    <span class="rbText" id="resumeText"></span>
+    <span class="spacer"></span>
+    <button class="btn small primary" id="btnResumeAll">恢复全部</button>
+    <button class="btn small ghost" id="btnDiscardPaused">丢弃</button>
+  </div>
+  <div class="monBody">
+    <div class="monLeft">
+      <div class="monNow">
+        <div class="mnLabel">当前处理</div>
+        <div class="mnImgWrap" id="mnImgWrap" title="鼠标左右滑动对比 · 点击全屏">
+          <img id="mnAfter" alt="放大后">
+          <img id="mnBefore" alt="原图">
+          <div class="mnLine" id="mnLine"><span class="mnGrip"></span></div>
+          <span class="mnTag left">原图</span>
+          <span class="mnTag right">放大后</span>
+          <span class="zoomTag" id="mnZoomTag"></span>
+          <span class="mnPlaceholder" id="mnPlaceholder">等待中</span>
+        </div>
+        <div class="mnName" id="mnName">—</div>
+        <div class="mnMeta" id="mnMeta"></div>
+      </div>
+      <div class="monStats" id="monStats"></div>
+    </div>
+    <div class="monRight">
+      <div class="mrHead">
+        <span>任务明细</span>
+        <span class="spacer"></span>
+        <label class="mrFilter"><input type="checkbox" id="monOnlyIssue"> 只看问题</label>
+      </div>
+      <div class="mrList" id="monList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 质检 -->
+<div id="auditModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:760px">
+    <div class="modalHead">
+      <span>质检报告 <span id="auditSub" style="font-weight:400;font-size:11.5px;color:var(--text-mute)"></span></span>
+      <button class="btn small ghost" id="btnCloseAudit">✕</button>
+    </div>
+    <div class="modalScroll" id="auditBody"></div>
+  </div>
+</div>
+
+<!-- 替换 -->
+<div id="replaceModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:620px">
+    <div class="modalHead">
+      <span>批量查找替换</span>
+      <button class="btn small ghost" id="btnCloseReplace">✕</button>
+    </div>
+    <div class="modalScroll">
+      <div class="fieldRow">
+        <div class="field"><label for="repFind">查找</label><input type="text" id="repFind" placeholder="误写的词"></div>
+        <div class="field"><label for="repWith">替换为</label><input type="text" id="repWith" placeholder="留空=删除"></div>
+      </div>
+      <label class="switchRow"><span>全词匹配</span><input type="checkbox" id="repWhole"></label>
+      <label class="switchRow"><span>区分大小写</span><input type="checkbox" id="repCase"></label>
+      <label class="switchRow"><span>替换前备份 .bak</span><input type="checkbox" id="repBackup" checked></label>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn" id="btnRepPreview">预览</button>
+        <button class="btn danger" id="btnRepApply" disabled>确认替换</button>
+      </div>
+      <div id="repResult" style="max-height:280px;overflow-y:auto;margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 新建/编辑项目 -->
+<div id="projModal" class="modalBackdrop">
+  <div class="modalBox" style="--mw:660px">
+    <div class="modalHead">
+      <span id="projModalTitle">项目设置</span>
+      <span class="spacer"></span>
+      <button class="btn small ghost" id="btnCloseProj">✕</button>
+    </div>
+    <div class="modalScroll" id="projScroll">
+
+      <!-- 基本信息 -->
+      <div class="setGroup">
+        <div class="sgTitle">基本信息</div>
+        <div class="field">
+          <label for="projName">项目名称</label>
+          <input type="text" id="projName" placeholder="如 Yanni" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="projDir">数据集目录</label>
+          <div class="dirRow">
+            <input type="text" id="projDir" placeholder="D:\data\Yanni" autocomplete="off">
+            <button class="btn small" id="btnPickDir" title="选择目录">📂</button>
+          </div>
+          <div class="hint" id="projDirHint">存放训练图片的目录</div>
+        </div>
+        <div class="field">
+          <label for="projOutDir">放大输出目录</label>
+          <div class="dirRow">
+            <input type="text" id="projOutDir" placeholder="留空自动：同级「目录名_放大」" autocomplete="off">
+            <button class="btn small" id="btnPickOutDir" title="选择目录">📂</button>
+          </div>
+          <div class="hint" id="projOutHint">留空则自动推导为同级「目录名_放大」</div>
+        </div>
+      </div>
+
+      <!-- 打标模型 -->
+      <div class="setGroup">
+        <div class="sgTitle">打标模型</div>
+        <div class="fieldRow">
+          <div class="field">
+            <label for="projProvider">Provider</label>
+            <select id="projProvider"></select>
+          </div>
+          <div class="field">
+            <label for="projModel">模型</label>
+            <select id="projModel"></select>
+          </div>
+        </div>
+        <div class="hint" id="projModelHint"></div>
+        <div class="field" id="projEffortField" hidden>
+          <label for="projEffort">思考强度</label>
+          <select id="projEffort"></select>
+          <div class="hint" id="projEffortHint"></div>
+        </div>
+      </div>
+
+      <!-- 打标内容 -->
+      <div class="setGroup">
+        <div class="sgTitle">打标内容</div>
+        <div class="fieldRow">
+          <div class="field">
+            <label for="projType">打标类型</label>
+            <select id="projType">
+              <option value="person">人物</option>
+              <option value="clothing">服装</option>
+              <option value="style">风格</option>
+              <option value="body">身材</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="projTriggerPos">触发词位置</label>
+            <select id="projTriggerPos">
+              <option value="prefix">开头</option>
+              <option value="suffix">结尾</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="projTrigger">触发词</label>
+          <input type="text" id="projTrigger" placeholder="可留空。如 yanni_style" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="projPerson">人物名字</label>
+          <input type="text" id="projPerson" placeholder="如 Yanni（用于目录命名，不进 caption）" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="projGeneric">泛化主体（caption 开头）</label>
+          <input type="text" id="projGeneric" placeholder="a young East Asian woman" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="projStyleHint">风格倾向提示</label>
+          <textarea id="projStyleHint" rows="2" placeholder="可选。如：偏写实摄影、柔光室内"></textarea>
+        </div>
+        <div class="field">
+          <label for="projExtra">附加指令</label>
+          <textarea id="projExtra" rows="2" placeholder="可选。如：强调手部姿态"></textarea>
+        </div>
+      </div>
+
+      <!-- 放大 -->
+      <div class="setGroup">
+        <div class="sgTitle">放大</div>
+        <div class="fieldRow">
+          <div class="field">
+            <label for="projMultiplier">放大倍数</label>
+            <select id="projMultiplier">
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+            </select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;padding-bottom:4px">
+            <label class="switchRow" style="margin:0"><span>放大后锐化</span>
+              <input type="checkbox" id="projSharpen"></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 执行行为 -->
+      <div class="setGroup">
+        <div class="sgTitle">执行行为</div>
+        <div class="fieldRow">
+          <div class="field">
+            <label for="projConcurrency">打标并发</label>
+            <select id="projConcurrency">
+              <option value="1">1</option><option value="2">2</option>
+              <option value="3">3</option><option value="4">4</option>
+              <option value="6">6</option><option value="8">8</option>
+            </select>
+            <div class="hint">同时发几个打标请求</div>
+          </div>
+          <div class="field">
+            <label for="projFolderName">文件夹名</label>
+            <input type="text" id="projFolderName" placeholder="留空用项目名" autocomplete="off">
+            <div class="hint">改名时用「名字_张数」</div>
+          </div>
+        </div>
+        <label class="switchRow"><span>递归子目录</span><input type="checkbox" id="projRecursive"></label>
+        <label class="switchRow"><span>跳过已有 caption（<code>.txt</code> 存在就不重打）</span><input type="checkbox" id="projSkip"></label>
+        <label class="switchRow"><span>文件名构图联动（<code>_head/_half/_full</code>）</span><input type="checkbox" id="projShotTags"></label>
+        <label class="switchRow"><span>批次完成后自动改名</span><input type="checkbox" id="projAutoRename"></label>
+      </div>
+
+    </div>
+    <div class="modalFoot">
+      <button class="btn ghost small danger" id="btnDeleteProject" hidden>删除项目</button>
+      <span class="spacer"></span>
+      <button class="btn ghost small" id="btnCancelProj">取消</button>
+      <button class="btn primary small" id="btnSaveProj">保存</button>
+    </div>
+  </div>
 </div>
 
 <!-- 全屏查看 -->
@@ -1050,6 +1354,7 @@ function renderProjects(){
         <span class="path">${esc(p.directory)}</span>
       </span>
       ${jobs.length?`<span class="cnth">${jobs.length}</span>`:""}
+      <button class="setBtn" data-set="${p.id}" title="项目设置">⚙</button>
       <button class="archBtn" data-arch="${p.id}" data-to="${p.archived?0:1}"
         title="${p.archived?"取消归档":"归档"}">${p.archived?"↩":"⌸"}</button>
     </div>`;
@@ -1067,12 +1372,18 @@ function renderProjects(){
 
   $$("#projectList .projItem").forEach(el=>{
     el.addEventListener("click",e=>{
-      if(e.target.closest(".archBtn")) return;
+      if(e.target.closest(".archBtn") || e.target.closest(".setBtn")) return;
       switchProject(el.dataset.id);
     });
     el.addEventListener("dblclick",e=>{
       if(e.target.closest(".archBtn")) return;
       openProjectModal(el.dataset.id);
+    });
+  });
+  $$("#projectList .setBtn").forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();
+      openProjectModal(b.dataset.set);
     });
   });
   $$("#projectList .archBtn").forEach(b=>{
@@ -1164,6 +1475,10 @@ async function openProjectModal(pid){
   $("#projExtra").value = cfg.extra_instructions || "";
   $("#projShotTags").checked = cfg.shot_tags !== false;
   $("#projAutoRename").checked = !!cfg.auto_rename;
+  $("#projTriggerPos").value = cfg.trigger_position || "prefix";
+  $("#projFolderName").value = cfg.folder_name || "";
+  $("#projOutDir").value = p ? (p.out_dir || "") : "";
+  updateProjOutHint();
 
   await loadProviderSelects(cfg);
   $("#projModal").classList.add("show");
@@ -1252,6 +1567,45 @@ $("#btnPickDir").addEventListener("click",async()=>{
   finally{ b.disabled=false; b.textContent=o; }
 });
 
+/* 放大输出目录 */
+function updateProjOutHint(){
+  const v = ($("#projOutDir").value || "").trim();
+  const dir = ($("#projDir").value || "").trim();
+  const hint = $("#projOutHint");
+  if(!hint) return;
+  if(v){
+    hint.textContent = "自定义输出目录";
+    hint.style.color = "";
+  }else if(dir){
+    const parts = dir.replace(/[\\/]+$/, "").split(/[\\/]/);
+    const base = parts.pop() || "";
+    const parent = parts.join("\\");
+    hint.textContent = `自动：${parent}${parent ? "\\" : ""}${base}_放大`;
+    hint.style.color = "";
+  }else{
+    hint.textContent = "留空则自动推导为同级「目录名_放大」";
+    hint.style.color = "";
+  }
+}
+$("#projOutDir").addEventListener("input", updateProjOutHint);
+$("#projDir").addEventListener("input", updateProjOutHint);
+
+$("#btnPickOutDir").addEventListener("click",async()=>{
+  const b=$("#btnPickOutDir"); const o=b.textContent;
+  b.disabled=true; b.textContent="…";
+  try{
+    const cur=$("#projOutDir").value.trim();
+    const d=await (await fetch("/api/pick-folder?initial="+encodeURIComponent(cur))).json();
+    if(d.error){ toast(d.error); return; }
+    if(d.cancelled) return;
+    $("#projOutDir").value=d.path;
+    updateProjOutHint();
+  }catch(e){ toast("选择失败："+e.message); }
+  finally{ b.disabled=false; b.textContent=o; }
+});
+
+$("#btnCancelProj").addEventListener("click",()=>$("#projModal").classList.remove("show"));
+
 $("#btnSaveProj").addEventListener("click",async()=>{
   const name=$("#projName").value.trim();
   const dir=$("#projDir").value.trim();
@@ -1262,27 +1616,34 @@ $("#btnSaveProj").addEventListener("click",async()=>{
     model:$("#projModel").value,
     effort:$("#projEffort").value || "",
     trigger_word:$("#projTrigger").value.trim(),
+    trigger_position:$("#projTriggerPos").value,
     person_name:$("#projPerson").value.trim(),
     generic_subject:$("#projGeneric").value.trim(),
     style_hint:$("#projStyleHint").value.trim(),
     extra_instructions:$("#projExtra").value.trim(),
     shot_tags:$("#projShotTags").checked,
     auto_rename:$("#projAutoRename").checked,
+    folder_name:$("#projFolderName").value.trim(),
     multiplier:parseFloat($("#projMultiplier").value),
     concurrency:+$("#projConcurrency").value,
     recursive:$("#projRecursive").checked,
     skip_existing:$("#projSkip").checked,
     sharpen:$("#projSharpen").checked,
   };
+  // 输出目录：留空交给后端推导
+  const outDir = $("#projOutDir").value.trim();
   let r;
+  const payload = {name, directory:dir, config:cfg};
+  if(outDir) payload.out_dir = outDir;
+
   if(state.editingProject){
     r=await (await fetch(`/api/projects/${state.editingProject}`,{
       method:"PATCH",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name, directory:dir, config:cfg})})).json();
+      body:JSON.stringify(payload)})).json();
   }else{
     r=await (await fetch("/api/projects",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name, directory:dir, config:cfg})})).json();
+      body:JSON.stringify(payload)})).json();
   }
   if(r.error){ toast(r.error); return; }
   $("#projModal").classList.remove("show");
@@ -2623,11 +2984,10 @@ $("#btnRunUpscale").addEventListener("click",()=>runAction("upscale"));
 $("#btnRunCaption").addEventListener("click",()=>runAction("caption"));
 $("#btnRunPipeline").addEventListener("click",()=>runAction("pipeline"));
 
-$("#btnSaveCfg").addEventListener("click",async()=>{
+$("#btnSaveCfg").addEventListener("click",()=>{
   const p=activeProject();
-  if(!p){ toast("没有项目"); return; }
-  // 项目配置本来就随 PATCH 保存，这里给个明确反馈
-  toast("项目配置已保存（每次改动自动存盘）");
+  if(!p){ toast("先选一个项目"); return; }
+  openProjectModal(p.id);
 });
 
 /* ============ 键盘 ============ */

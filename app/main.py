@@ -532,7 +532,8 @@ def api_project_create(req: dict):
         return JSONResponse({"error": "需要目录"}, status_code=400)
     if not Path(directory).is_dir():
         return JSONResponse({"error": f"目录不存在：{directory}"}, status_code=400)
-    p = _projects.create(name, directory, req.get("config"))
+    p = _projects.create(name, directory, req.get("config"),
+                         out_dir=req.get("out_dir"))
     return {"ok": True, "project": p}
 
 
@@ -542,6 +543,14 @@ def api_project_update(pid: str, req: dict):
     if "archived" in req:
         p = _projects.set_archived(pid, bool(req.pop("archived")))
     else:
+        # out_dir 传空串 = 恢复自动推导
+        if "out_dir" in req and not str(req.get("out_dir") or "").strip():
+            cur = _projects.get(pid)
+            if cur:
+                src = Path(req.get("directory") or cur["directory"])
+                req["out_dir"] = str(src.parent / (src.name + "_放大"))
+            else:
+                req.pop("out_dir", None)
         p = _projects.update(pid, **req)
     if not p:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
