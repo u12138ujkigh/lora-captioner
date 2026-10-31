@@ -124,8 +124,18 @@ body{
 .fbtn .n{font-size:10px;color:var(--text-mute);font-variant-numeric:tabular-nums}
 .fbtn.active .n{color:var(--safe)}
 
+#rubberBand{
+  position:fixed;display:none;z-index:60;
+  border:1px solid var(--safe);background:rgba(74,158,255,.16);
+  pointer-events:none;box-shadow:0 0 0 1px rgba(74,158,255,.2);
+}
+.fileCard.rubber{
+  border-color:var(--safe);
+  box-shadow:0 0 0 1px var(--safe),0 0 0 4px rgba(74,158,255,.14);
+}
 #fileGrid{
-  --col-w:126px;flex:1;overflow-y:auto;overflow-x:hidden;padding:12px;
+  --col-w:126px;
+  position:relative;flex:1;overflow-y:auto;overflow-x:hidden;padding:12px;
   position:relative;scrollbar-gutter:stable;min-height:0;
 }
 .fileCard{
@@ -136,7 +146,9 @@ body{
 .fileCard:hover{border-color:#5a5a4c}
 .fileCard.selected{border-color:var(--safe);box-shadow:0 0 0 1px var(--safe),0 0 0 5px rgba(74,158,255,.18)}
 .fileCard.picked{border-color:var(--safe);box-shadow:0 0 0 2px var(--safe),0 0 0 6px rgba(74,158,255,.16)}
-.fileCard img{display:block;width:100%;height:auto;object-fit:contain;background:var(--paper)}
+.fileCard img{display:block;width:100%;height:auto;object-fit:contain;
+  background:var(--paper);-webkit-user-drag:none;user-select:none}
+#fileGrid{user-select:none}
 .fileCard .pick{position:absolute;top:4px;left:4px;width:16px;height:16px;border-radius:3px;
   border:1.5px solid rgba(255,255,255,.55);background:rgba(12,17,24,.72);
   display:flex;align-items:center;justify-content:center;font-size:10px;
@@ -800,6 +812,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
       <strong>还没有项目</strong>
       <span>点左上角「+ 新建」选择一个数据集目录</span>
     </div></div>
+    <div id="rubberBand"></div>
   </div>
 
   <!-- 右：预览 -->
@@ -1794,6 +1807,99 @@ function passFilter(f){
   return true;
 }
 
+/* ===================== 框选（rubber band）===================== */
+/*
+  在网格上按住左键拖动 = 框选。默认把框到的图加入勾选，
+  按住 Alt（或 Ctrl）拖动则从勾选里移除。
+  单击（按下后没怎么移动）不会触发，仍走卡片自己的 click。
+*/
+const rubber = {
+  active: false,      // 真的进入框选了
+  down: false,
+  sx: 0, sy: 0,       // 内容坐标起点
+  remove: false,
+  lastEnd: 0,         // 框选刚结束的时间，用于拦截 mouseup 引起的 click
+};
+
+function bindRubber(){
+  const grid = $("#fileGrid");
+  const band = $("#rubberBand");
+  if(!grid || grid.dataset.rubberBound) return;
+  grid.dataset.rubberBound = "1";
+
+  // 用 client 矩形判断相交，最直接
+  const overlaps = (bandRect, el)=>{
+    const r = el.getBoundingClientRect();
+    return !(r.right < bandRect.left || r.left > bandRect.right ||
+             r.bottom < bandRect.top || r.top > bandRect.bottom);
+  };
+
+  const drawBand = (gx, gy)=>{
+    const x = Math.min(rubber.sx, gx), y = Math.min(rubber.sy, gy);
+    const w = Math.abs(gx - rubber.sx), h = Math.abs(gy - rubber.sy);
+    band.style.left = x + "px";
+    band.style.top = y + "px";
+    band.style.width = w + "px";
+    band.style.height = h + "px";
+    band.style.display = "block";
+    // 高亮与选框相交的卡片（都用 client 坐标，直接比对）
+    const br = band.getBoundingClientRect();
+    $$("#fileGrid .fileCard").forEach(c=>{
+      c.classList.toggle("rubber", overlaps(br, c));
+    });
+  };
+
+  grid.addEventListener("mousedown", e=>{
+    if(e.button !== 0) return;
+    if(e.target.closest(".txTa")) return;      // 不在文本编辑里
+    // 只在网格区域响应；右键/修饰键放行给浏览器
+    rubber.down = true;
+    rubber.active = false;
+    rubber.remove = e.altKey || e.ctrlKey;
+    rubber.sx = e.clientX; rubber.sy = e.clientY;
+  });
+
+  document.addEventListener("mousemove", e=>{
+    if(!rubber.down) return;
+    if(!rubber.active){
+      // 超过阈值才算框选，普通点击不受影响
+      if(Math.abs(e.clientX - rubber.sx) < 6 && Math.abs(e.clientY - rubber.sy) < 6) return;
+      rubber.active = true;
+    }
+    if(rubber.active) e.preventDefault();
+    drawBand(e.clientX, e.clientY);
+  });
+
+  document.addEventListener("mouseup", ()=>{
+    if(!rubber.down) return;
+    rubber.down = false;
+    if(!rubber.active) return;
+    rubber.active = false;
+    rubber.lastEnd = Date.now();
+    // 收集 rubber 高亮的卡片
+    const hits = $$("#fileGrid .fileCard.rubber").map(c=>c.dataset.path).filter(Boolean);
+    hits.forEach(path=>{
+      if(rubber.remove) state.PICKED.delete(path);
+      else state.PICKED.add(path);
+    });
+    band.style.display = "none";
+    $$("#fileGrid .fileCard").forEach(c=>{
+      c.classList.remove("rubber");
+      c.classList.toggle("picked", state.PICKED.has(c.dataset.path));
+    });
+    renderSelCount();
+  });
+}
+bindRubber();
+
+/* 框选刚结束的 150ms 内，吞掉卡片上误触发的 click */
+$("#fileGrid").addEventListener("click", e=>{
+  if(Date.now() - rubber.lastEnd < 150){
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+
 function togglePick(path){
   if(state.PICKED.has(path)) state.PICKED.delete(path);
   else state.PICKED.add(path);
@@ -1871,11 +1977,15 @@ function renderGrid(){
     img.style.opacity=0;
     img.addEventListener("load",()=>{img.style.opacity=1;},{once:true});
     img.addEventListener("error",()=>{img.style.opacity=1;});
-    // 点击 = 切换勾选；双击 = 只查看（不改变勾选）
-    card.addEventListener("click",()=>togglePick(f.path));
-    card.addEventListener("dblclick",e=>{ e.preventDefault(); selectFile(f.path); });
+    // 单击查看；点勾选框才是选择；拖动 = 框选（在 grid 上统一处理）
+    card.addEventListener("click",()=>selectFile(f.path));
+    card.querySelector(".pick").addEventListener("click",e=>{
+      e.stopPropagation();
+      togglePick(f.path);
+    });
     card.addEventListener("keydown",e=>{
-      if(e.key==="Enter"||e.key===" "){e.preventDefault();togglePick(f.path);}
+      if(e.key==="Enter"){ e.preventDefault(); selectFile(f.path); }
+      else if(e.key===" "){ e.preventDefault(); togglePick(f.path); }
     });
     frag.appendChild(card);
   });
