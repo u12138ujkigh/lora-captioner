@@ -1353,6 +1353,69 @@ def api_get_caption(path: str):
     return {"path": path, "caption": "", "exists": False}
 
 
+@app.post("/api/captions/batch")
+def api_captions_batch(req: dict):
+    """一次取回整个目录所有图片的 caption 文本。
+
+    逐张调 /api/caption 的话，50 张就是 50 个请求，翻起来很慢；
+    这里一次扫完读完，前端可以整屏展示、就地编辑。
+    """
+    directory = str(req.get("directory") or "").strip()
+    if not directory:
+        return JSONResponse({"error": "需要目录"}, status_code=400)
+    if not Path(directory).is_dir():
+        return JSONResponse({"error": f"目录不存在：{directory}"}, status_code=404)
+
+    recursive = bool(req.get("recursive"))
+    out_dir = str(req.get("out_dir") or "").strip()
+    items = cap.scan_images(directory, recursive)
+
+    out = []
+    with_caption = 0
+    for it in items:
+        src = Path(it["path"])
+        # 两处找 .txt：源目录优先，其次放大目录。
+        # 全流程是对放大图打标的，文本因此常常只存在于放大目录，
+        # 只查源目录会让整个列表看起来都是「无文本」。
+        candidates = [src.with_suffix(".txt")]
+        if out_dir:
+            candidates.append(Path(out_dir) / (src.stem + ".txt"))
+
+        text, exists, mtime, cap_path = "", False, 0, ""
+        for cp in candidates:
+            if cp.is_file():
+                try:
+                    text = cp.read_text(encoding="utf-8", errors="ignore").strip()
+                    mtime = int(cp.stat().st_mtime)
+                    exists = True
+                    cap_path = str(cp)
+                except Exception:
+                    text = ""
+                break
+
+        if exists:
+            with_caption += 1
+        out.append({
+            "path": it["path"],
+            "name": it["name"],
+            "caption": text,
+            "exists": exists,
+            "caption_path": cap_path,
+            "words": len([w for w in text.split() if w.strip()]),
+            "chars": len(text),
+            "mtime": mtime,
+            "width": it.get("width", 0),
+            "height": it.get("height", 0),
+        })
+
+    return {
+        "items": out,
+        "total": len(out),
+        "with_caption": with_caption,
+        "without_caption": len(out) - with_caption,
+    }
+
+
 @app.post("/api/caption")
 def api_save_caption(req: EditRequest):
     cp = Path(req.path).with_suffix(".txt")

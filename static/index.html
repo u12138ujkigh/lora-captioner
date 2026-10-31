@@ -666,6 +666,77 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   padding:0 3px;border-radius:2px;background:var(--paper-3);color:var(--text-dim);
 }
 .modalFoot .spacer{flex:1}
+
+/* ---------- 文本总览 ---------- */
+#textsView{
+  position:fixed;inset:0;z-index:290;background:var(--ink);
+  display:flex;flex-direction:column;
+}
+.txTop{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;flex-shrink:0;
+  background:var(--paper);border-bottom:1px solid var(--rule);
+}
+.txTitle{font-size:13px;font-weight:650}
+.txStat{font-size:11.5px;color:var(--text-mute);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.txSearch{
+  width:210px;padding:4px 9px;border-radius:var(--r-sm);
+  border:1px solid var(--rule);background:var(--paper-2);color:var(--text);
+  font-family:inherit;font-size:12px;
+}
+.txSearch:focus{outline:none;border-color:var(--safe);background:var(--paper-3)}
+.txFilters{display:flex;gap:2px;background:var(--paper-2);
+  border:1px solid var(--rule);border-radius:var(--r-sm);padding:2px}
+.txFilters button{
+  padding:3px 9px;border:none;border-radius:3px;background:transparent;
+  color:var(--text-mute);font-family:inherit;font-size:11.5px;cursor:pointer;
+  white-space:nowrap;
+}
+.txFilters button:hover{color:var(--text)}
+.txFilters button.active{background:var(--safe);color:#04121f;font-weight:600}
+
+.txBody{flex:1;overflow-y:auto;padding:10px 14px 40px;min-height:0}
+.txRow{
+  display:flex;gap:11px;padding:9px 10px;margin-bottom:7px;
+  background:var(--paper);border:1px solid var(--rule);border-radius:var(--r-sm);
+  transition:border-color .12s;
+}
+.txRow:hover{border-color:#38465a}
+.txRow.dirty{border-color:rgba(74,158,255,.6)}
+.txRow.empty{background:rgba(247,109,109,.05);border-color:rgba(247,109,109,.3)}
+.txThumb{
+  width:74px;height:98px;flex-shrink:0;border-radius:3px;overflow:hidden;
+  background:#080b10;cursor:pointer;
+}
+.txThumb img{width:100%;height:100%;object-fit:cover;display:block}
+.txMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.txHead{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-mute)}
+.txName{
+  font-family:"Cascadia Mono",Consolas,monospace;font-size:11px;
+  color:var(--safe-bright);cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;
+}
+.txName:hover{text-decoration:underline}
+.txMeta{font-variant-numeric:tabular-nums;white-space:nowrap}
+.txMeta.warnS{color:var(--fail)}
+.txMeta.warnL{color:#e8b339}
+.txBadge{
+  font-size:9.5px;line-height:14px;padding:0 5px;border-radius:3px;
+  background:rgba(247,109,109,.16);color:var(--fail);
+  border:1px solid rgba(247,109,109,.35);white-space:nowrap;
+}
+.txTa{
+  width:100%;min-height:52px;resize:vertical;padding:6px 8px;
+  border-radius:3px;border:1px solid var(--rule-soft);
+  background:var(--paper-2);color:var(--text);
+  font-family:inherit;font-size:12px;line-height:1.6;
+}
+.txTa:focus{outline:none;border-color:var(--safe);background:var(--paper-3);
+  box-shadow:0 0 0 2px var(--safe-wash)}
+.txRow.empty .txTa{border-color:rgba(247,109,109,.3)}
+.txActions{display:flex;gap:5px;align-items:center;margin-top:2px}
+.txSaved{font-size:10.5px;color:var(--done);opacity:0;transition:opacity .2s}
+.txSaved.show{opacity:1}
 </style>
 </head>
 <body>
@@ -680,6 +751,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <button class="btn primary" id="btnRunPipeline">全流程</button>
   <button class="btn" id="btnRunUpscale">放大</button>
   <button class="btn" id="btnRunCaption">打标</button>
+  <button class="btn ghost small" id="btnTexts" title="一次查看全部 caption 文本">文本</button>
   <button class="btn ghost small" id="btnAudit" title="质检当前目录的 caption">质检</button>
   <button class="btn ghost small" id="btnReplace" title="批量查找替换 caption">替换</button>
   <button class="btn ghost small" id="btnRename" title="把当前项目目录改名为 名字_张数">改名</button>
@@ -787,6 +859,27 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;heigh
   <span class="recent" id="qRecent" hidden></span>
   <button class="btn small ghost" id="btnCancelAll" hidden>全部取消</button>
   <button class="btn small" id="btnMonitor" title="展开实时监控面板">监控 ▲</button>
+</div>
+
+<!-- 文本总览 -->
+<div id="textsView" hidden>
+  <div class="txTop">
+    <span class="txTitle">文本总览</span>
+    <span class="txStat" id="txStat"></span>
+    <span class="spacer"></span>
+    <input type="search" id="txSearch" class="txSearch" placeholder="搜索文本内容或文件名…" autocomplete="off">
+    <div class="txFilters" id="txFilters">
+      <button data-f="all" class="active">全部</button>
+      <button data-f="has">有文本</button>
+      <button data-f="none">无文本</button>
+      <button data-f="short">过短</button>
+      <button data-f="long">过长</button>
+    </div>
+    <button class="btn small ghost" id="txCopyAll" title="把当前筛选结果的文本复制到剪贴板">复制</button>
+    <button class="btn small ghost" id="txRefresh" title="重新读取">刷新</button>
+    <button class="btn small ghost" id="txClose">✕</button>
+  </div>
+  <div class="txBody" id="txBody"></div>
 </div>
 
 <!-- 全屏查看 -->
@@ -2814,6 +2907,247 @@ function bindCompareZoom(el, opts){
 
   el.addEventListener("mouseleave", ()=>{ /* 缩放状态保留，方便继续看 */ });
 }
+
+/* ===================== 文本总览 ===================== */
+const tx = {
+  open: false,
+  items: [],        // 全量数据
+  filter: "all",
+  query: "",
+  dirty: new Map(), // path -> 未保存的文本
+  saving: new Set(),
+};
+
+function txOpen(){
+  const pj = activeProject();
+  if(!pj){ toast("先选一个项目"); return; }
+  tx.open = true;
+  $("#textsView").hidden = false;
+  txLoad();
+}
+
+function txClose(){
+  tx.open = false;
+  // 有未保存的改动就提醒
+  if(tx.dirty.size){
+    const n = tx.dirty.size;
+    if(!confirm(`还有 ${n} 条没保存，确定关闭？`)) return;
+  }
+  $("#textsView").hidden = true;
+  tx.dirty.clear();
+  scanProject();      // 回到列表时刷新状态
+}
+
+async function txLoad(){
+  const pj = activeProject();
+  if(!pj) return;
+  const cfg = pj.config || {};
+  $("#txBody").innerHTML = '<div class="empty-hint" style="padding:40px"><strong>读取中…</strong></div>';
+  try{
+    const d = await (await fetch("/api/captions/batch",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({directory:pj.directory, recursive:!!cfg.recursive,
+                           out_dir:pj.out_dir||""})
+    })).json();
+    if(d.error){ $("#txBody").innerHTML = `<div class="empty-hint" style="padding:30px"><strong>读取失败</strong><span>${esc(d.error)}</span></div>`; return; }
+    tx.items = d.items || [];
+    tx.total = d.total || 0;
+    tx.withCaption = d.with_caption || 0;
+    tx.dirty.clear();
+    renderTx();
+  }catch(e){
+    $("#txBody").innerHTML = `<div class="empty-hint" style="padding:30px"><strong>读取失败</strong><span>${esc(e.message)}</span></div>`;
+  }
+}
+
+/* 单条当前文本（优先未保存的编辑内容） */
+function txTextOf(it){
+  return tx.dirty.has(it.path) ? tx.dirty.get(it.path) : (it.caption || "");
+}
+
+function txPass(it){
+  const text = txTextOf(it);
+  const n = (text.match(/\S+/g) || []).length;
+  // 筛选
+  if(tx.filter === "has"  && !text.trim()) return false;
+  if(tx.filter === "none" && text.trim()) return false;
+  if(tx.filter === "short" && !(text.trim() && n < 20)) return false;
+  if(tx.filter === "long"  && !(n > 120)) return false;
+  // 搜索
+  if(tx.query){
+    const q = tx.query.toLowerCase();
+    if(!(text.toLowerCase().includes(q) || it.name.toLowerCase().includes(q))) return false;
+  }
+  return true;
+}
+
+function renderTx(){
+  const box = $("#txBody");
+  const list = tx.items.filter(txPass);
+
+  // 顶部统计
+  const dirtyN = tx.dirty.size;
+  const noneN = tx.items.filter(x=>!txTextOf(x).trim()).length;
+  $("#txStat").textContent =
+    `${list.length}/${tx.total} 条` +
+    (noneN ? ` · 无文本 ${noneN}` : "") +
+    (dirtyN ? ` · 未保存 ${dirtyN}` : "");
+
+  if(!list.length){
+    box.innerHTML = `<div class="empty-hint" style="padding:40px">
+      <strong>${tx.total ? "当前筛选没有结果" : "这个目录没有图片"}</strong>
+      <span>${tx.total ? "换个筛选条件或清空搜索" : "确认目录里有 jpg/png 文件"}</span></div>`;
+    return;
+  }
+
+  box.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  list.forEach(it=>{
+    const text = txTextOf(it);
+    const n = (text.match(/\S+/g) || []).length;
+    const isDirty = tx.dirty.has(it.path);
+    const isEmpty = !text.trim();
+
+    const row = document.createElement("div");
+    row.className = "txRow" + (isEmpty ? " empty" : "") + (isDirty ? " dirty" : "");
+    row.dataset.path = it.path;
+    row.dataset.name = it.name;
+
+    const metaCls = isEmpty ? "" : (n < 20 ? " warnS" : (n > 120 ? " warnL" : ""));
+    const badge = isEmpty ? '<span class="txBadge">无文本</span>' : "";
+
+    row.innerHTML = `
+      <div class="txThumb"><img loading="lazy" decoding="async"
+        src="/api/thumb?path=${encodeURIComponent(it.path)}&size=160" alt=""></div>
+      <div class="txMain">
+        <div class="txHead">
+          <span class="txName" title="${esc(it.path)}">${esc(it.name)}</span>
+          <span class="txMeta${metaCls}">${n} 词 · ${it.width}×${it.height}</span>
+          ${badge}
+          <span class="spacer" style="flex:1"></span>
+          <span class="txSaved"></span>
+        </div>
+        <textarea class="txTa" spellcheck="false"
+          placeholder="（空，可在这里直接写）">${esc(text)}</textarea>
+      </div>`;
+
+    const ta = row.querySelector(".txTa");
+    // 自适应高度
+    const fit = ()=>{ ta.style.height = "auto"; ta.style.height = Math.max(52, ta.scrollHeight + 2) + "px"; };
+    requestAnimationFrame(fit);
+
+    ta.addEventListener("input", ()=>{
+      const v = ta.value;
+      if(v === (it.caption || "")) tx.dirty.delete(it.path);
+      else tx.dirty.set(it.path, v);
+      row.classList.toggle("dirty", tx.dirty.has(it.path));
+      row.classList.toggle("empty", !v.trim());
+      const cnt = (v.match(/\S+/g) || []).length;
+      const m = row.querySelector(".txMeta");
+      m.textContent = `${cnt} 词 · ${it.width}×${it.height}`;
+      m.className = "txMeta" + (!v.trim() ? "" : (cnt < 20 ? " warnS" : (cnt > 120 ? " warnL" : "")));
+      const bd = row.querySelector(".txBadge");
+      if(bd) bd.style.display = v.trim() ? "none" : "";
+      fit();
+      // 统计跟着变
+      const dn = tx.dirty.size;
+      const nn = tx.items.filter(x=>!txTextOf(x).trim()).length;
+      $("#txStat").textContent = `${tx.items.filter(txPass).length}/${tx.total} 条`
+        + (nn ? ` · 无文本 ${nn}` : "") + (dn ? ` · 未保存 ${dn}` : "");
+    });
+
+    // 失焦自动保存
+    ta.addEventListener("blur", ()=>{ txSaveOne(it, ta, row); });
+
+    // Ctrl+S 立即保存本条
+    ta.addEventListener("keydown", e=>{
+      if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s"){
+        e.preventDefault();
+        txSaveOne(it, ta, row);
+      }
+    });
+
+    // 点文件名 / 缩略图跳到主界面看这张
+    row.querySelector(".txName").addEventListener("click", ()=>txGoto(it.path));
+    row.querySelector(".txThumb").addEventListener("click", ()=>txGoto(it.path));
+
+    frag.appendChild(row);
+  });
+  box.appendChild(frag);
+}
+
+async function txSaveOne(it, ta, row){
+  if(!tx.dirty.has(it.path)) return;
+  const v = ta.value;
+  if(tx.saving.has(it.path)) return;
+  tx.saving.add(it.path);
+  try{
+    const d = await (await fetch("/api/caption",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({path:it.path, content:v})
+    })).json();
+    if(d.error){ toast("保存失败：" + d.error); return; }
+    it.caption = v;              // 基准值更新
+    tx.dirty.delete(it.path);
+    row.classList.remove("dirty");
+    const tag = row.querySelector(".txSaved");
+    tag.textContent = "已保存";
+    tag.classList.add("show");
+    setTimeout(()=>tag.classList.remove("show"), 1400);
+    // 同步主网格里的状态
+    const f = state.files.find(x=>x.path===it.path);
+    if(f){ f.status = v.trim() ? "done" : "pending"; }
+  }catch(e){
+    toast("保存失败：" + e.message);
+  }finally{
+    tx.saving.delete(it.path);
+  }
+}
+
+function txGoto(path){
+  txClose();
+  // 等视图收起再定位
+  setTimeout(()=>selectFile(path), 60);
+}
+
+/* 事件绑定 */
+$("#btnTexts").addEventListener("click", txOpen);
+$("#txClose").addEventListener("click", txClose);
+$("#txRefresh").addEventListener("click", txLoad);
+
+$("#txSearch").addEventListener("input", e=>{
+  tx.query = e.target.value.trim();
+  renderTx();
+});
+
+$$("#txFilters button").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    tx.filter = b.dataset.f;
+    $$("#txFilters button").forEach(x=>x.classList.toggle("active", x===b));
+    renderTx();
+  });
+});
+
+$("#txCopyAll").addEventListener("click", async()=>{
+  const list = tx.items.filter(txPass);
+  if(!list.length){ toast("没有内容"); return; }
+  const text = list.map(it=>`${it.name}\t${txTextOf(it)}`).join("\n");
+  try{
+    await navigator.clipboard.writeText(text);
+    toast(`已复制 ${list.length} 条（制表符分隔）`);
+  }catch(e){
+    // 剪贴板不可用时退回选中提示
+    toast("复制失败：" + e.message);
+  }
+});
+
+/* Esc 关闭 */
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && tx.open){
+    e.stopPropagation();
+    txClose();
+  }
+}, true);
 
 /* ============ 单张图详情 ============ */
 let _itemView = "upscaled";     // upscaled | original
